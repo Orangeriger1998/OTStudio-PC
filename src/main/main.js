@@ -66,7 +66,7 @@ function keySlots() {
 function publicState() {
   return {
     version: app.getVersion(), settings: settings(), services: services(), keys: keySlots(), history: jobs.list(),
-    hosts: store.read('hosts', []), replicateModels: replicate.MODELS, saveDirs: { image: saveDir('image'), video: saveDir('video') },
+    hosts: store.read('hosts', []), replicateModels: replicate.MODELS, editModels: [...replicate.EDIT_MODELS], saveDirs: { image: saveDir('image'), video: saveDir('video') },
   };
 }
 
@@ -87,6 +87,7 @@ function registerHandlers() {
     const s = settings();
     const out = {};
     if (typeof patch.simpleView === 'boolean') out.simpleView = patch.simpleView;
+    if (typeof patch.editModel === 'string' && replicate.EDIT_MODELS.has(patch.editModel)) out.editModel = patch.editModel;
     if (patch.last && typeof patch.last === 'object') {
       out.last = { ...s.last };
       for (const kind of ['image', 'video']) if (patch.last[kind]) out.last[kind] = { service: String(patch.last[kind].service || '').slice(0, 64), model: String(patch.last[kind].model || '').slice(0, 200) };
@@ -121,6 +122,10 @@ function registerHandlers() {
     return r.filePaths.slice(0, 16).map((p) => jobs.addPicture(p));
   });
   handle('generate', (req) => jobs.generate(req));
+  handle('expand', (req) => jobs.expand(req || {}));
+  handle('upscale', (req) => jobs.upscale(req || {}));
+  handle('media:size', (name) => jobs.size(String(name)));
+  handle('video:lastFrame', (id) => jobs.lastFrame(String(id)));
   handle('cancel', (id) => jobs.cancel(id));
   handle('remove', (ids) => jobs.remove(Array.isArray(ids) ? ids.map(String) : []));
   handle('download:retry', (id) => jobs.retryDownload(String(id)));

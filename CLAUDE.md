@@ -6,7 +6,8 @@ OT Studio for Windows makes pictures and videos from the user's own API keys. It
 
 - Electron. `src/main` is the main process: it does all network calls, file access, and key storage. `src/renderer` is the window: plain HTML, CSS, and JavaScript with no framework, sandboxed, with contextIsolation and a strict Content Security Policy. `src/main/preload.js` is the only bridge, and it exposes a fixed list of calls.
 - `src/core` holds logic with no Electron types, so `node --test` covers it: reading pasted examples (snippet.js), filling request templates (template.js), service definitions (service.js), the built-in services (builtins.js), and Replicate (replicate.js).
-- Data lives in JSON files under the app's data folder (`%APPDATA%\OT Studio`). Do not add native modules: the PC has no C++ build tools.
+- Data lives in JSON files under the app's data folder (`%APPDATA%\OT Studio`). Native modules are allowed only when they ship prebuilt N-API binaries (sharp does): the PC has no C++ build tools.
+- Picture work on the PC uses sharp (`src/main/imaging.js`); video work uses the bundled ffmpeg from ffmpeg-static (`src/main/video.js`), run with an argument list and never through a shell. Both are unpacked from the asar archive by `build.asarUnpack`.
 
 ## Rules that protect the user
 

@@ -16,8 +16,9 @@ const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypmp42')
 
 function json(status, value) { return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } }); }
 
-function setup(routes, { approve = false } = {}) {
+function setup(routes, { approve = false, before } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otjobs-'));
+  if (before) before(dir);
   const calls = [];
   const fetchImpl = async (url, opts) => {
     calls.push({ url, method: opts.method, headers: opts.headers, body: opts.body });
@@ -145,4 +146,71 @@ test('Replicate: pictures are uploaded, the prediction is checked, and stop work
   assert.equal(jobs.list().find((e) => e.id === entry.id).state, 'canceled');
   assert.deepEqual(jobs.remove([entry.id]), [entry.id]);
   assert.equal(fs.existsSync(path.join(dir, 'media', pic)), false, 'pictures only that job used are removed with it');
+});
+
+const sharp = require('sharp');
+const video = require('../src/main/video');
+const { execFileSync } = require('child_process');
+
+test('Expand: canvas and mask go up, the painted result comes back at full size', async () => {
+  let created;
+  const routes = [
+    { method: 'POST', url: 'https://api.replicate.com/v1/files', reply: () => json(201, { urls: { get: `https://api.replicate.com/v1/files/f${Math.random().toString(36).slice(2, 8)}` } }) },
+    { method: 'POST', url: 'https://api.replicate.com/v1/models/black-forest-labs/flux-fill-dev/predictions', reply: (o) => { created = JSON.parse(o.body).input; return json(201, { id: 'x1', status: 'succeeded', output: 'https://replicate.delivery/out.png' }); } },
+    { url: 'https://replicate.delivery/out.png', reply: async () => new Response(await sharp({ create: { width: created ? 1440 : 16, height: 816, channels: 3, background: '#2040e0' } }).png().toBuffer()) },
+  ];
+  const { jobs, dir } = setup(routes);
+  const src = path.join(dir, 'pic.png');
+  fs.writeFileSync(src, await sharp({ create: { width: 900, height: 900, channels: 3, background: '#e02020' } }).png().toBuffer());
+  const pic = jobs.addPicture(src);
+  const entry = await jobs.expand({ source: pic, ratio: '16:9', prompt: '', safety: false });
+  assert.equal(created.megapixels, 'match_input');
+  assert.equal(created.disable_safety_checker, true);
+  assert.match(created.image, /^https:\/\/api\.replicate\.com\/v1\/files\//);
+  assert.notEqual(created.image, created.mask);
+  for (let i = 0; i < 50 && jobs.list()[0].state !== 'done'; i++) await settle();
+  const e = jobs.list().find((x) => x.id === entry.id);
+  assert.equal(e.state, 'done', e.error);
+  assert.equal(e.error, undefined);
+  const meta = await sharp(jobs.mediaPath(e.files[0])).metadata();
+  assert.deepEqual([meta.width, meta.height], [1600, 900]);
+});
+
+test('Upscale refuses pictures that are already large', async () => {
+  const { jobs, dir, calls } = setup([]);
+  const src = path.join(dir, 'big.png');
+  fs.writeFileSync(src, await sharp({ create: { width: 2000, height: 1500, channels: 3, background: '#808080' } }).png().toBuffer());
+  await assert.rejects(jobs.upscale({ source: jobs.addPicture(src), scale: 4 }), /already large/);
+  assert.equal(calls.length, 0, 'nothing is sent');
+});
+
+test('Make it longer: the new part is joined to the end of the earlier video', { timeout: 120000 }, async () => {
+  let partBytes;
+  const routes = [
+    { method: 'POST', url: 'https://api.spicyapi.com/v1/videos/generations', reply: () => json(200, { id: 't1', status: 'succeeded', output: { video_url: 'https://cdn.spicyapi.com/part.mp4' } }) },
+    { url: 'https://cdn.spicyapi.com/part.mp4', reply: () => new Response(partBytes) },
+  ];
+  const { jobs, dir } = setup(routes, {
+    before: (d) => {
+      const media = path.join(d, 'media');
+      fs.mkdirSync(media, { recursive: true });
+      const ff = video.ffmpegPath();
+      execFileSync(ff, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=16:duration=2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', path.join(media, 'vid-parent00-0.mp4')]);
+      execFileSync(ff, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=16:duration=2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', path.join(d, 'part.mp4')]);
+      partBytes = fs.readFileSync(path.join(d, 'part.mp4'));
+      const store = createStore(path.join(d, 'data'));
+      store.write('history', [{ id: 'parent00-0000', kind: 'video', service: 'spicyapi-video', serviceName: 'SpicyAPI', model: 'spicy-video-1', prompt: 'waves', options: {}, pictures: {}, state: 'done', files: ['vid-parent00-0.mp4'], created: 1 }]);
+    },
+  });
+  const frame = await jobs.lastFrame('parent00-0000');
+  assert.match(frame, /^in-.*\.png$/);
+  const entry = await jobs.generate({ kind: 'video', service: 'spicyapi-video', model: 'spicy-video-1', prompt: 'more waves', options: {}, op: { type: 'longer', parent: 'parent00-0000' } });
+  for (let i = 0; i < 400 && jobs.list()[0].state !== 'done'; i++) await settle();
+  const e = jobs.list().find((x) => x.id === entry.id);
+  assert.equal(e.state, 'done');
+  assert.equal(e.error, undefined);
+  const info = await video.probe(jobs.mediaPath(e.files[0]));
+  assert.ok(Math.abs(info.duration - 4) < 0.3, `about 4 seconds, got ${info.duration}`);
+  jobs.remove(['parent00-0000']);
+  assert.ok(fs.existsSync(path.join(dir, 'media', 'vid-parent00-0.mp4')), 'the longer video still refers to the earlier one, so it stays');
 });

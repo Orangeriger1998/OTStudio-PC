@@ -22,10 +22,20 @@ Open **Videos** and follow the same steps. To start a video from a picture you m
 
 Editing models such as Seedream 4.5, Qwen Image Edit Plus, and FLUX Kontext take pictures. Click **Choose a picture**, or click **Use as reference** on a card. Seedream 4.5 takes up to 14 pictures.
 
+## Edit, expand, and upscale a picture
+
+- **Edit** opens the picture on the Pictures tab with the editing model you used last (FLUX Kontext dev at first). Describe the change. Seedream 4.5, FLUX.2 dev, and Qwen Image Edit Plus also take more reference pictures.
+- **Expand** gives the picture a new shape, such as wide or tall. Choose the shape, look at the preview, and say what fills the new area if you like. FLUX Fill dev on Replicate paints the new area, and OT Studio then rebuilds the picture at full size with your original pixels in the middle. It costs about 4 cents.
+- **Upscale** makes a picture 2 or 4 times larger with Real-ESRGAN on Replicate. Pictures over about 2 megapixels, such as 1440 by 1440, are already large: the upscaler cannot take them, so OT Studio says so instead of sending them.
+
+## Make a video longer
+
+Click **Make it longer** on a finished video. OT Studio takes the video's last frame and puts it in the starting picture of the same model, with the same prompt and settings. Change the prompt to say what happens next, then click **Make the next part**. When the new part arrives, OT Studio joins it to the end of the video, and the card shows the whole video. Each part can drift a little from the one before, so after a few parts a person may look less like themselves.
+
 ## Save, repeat, and delete
 
 - **Save** copies the result to your Pictures or Videos folder, in an OT Studio folder. The message after saving offers **Open folder** and **Change folder**.
-- **Repeat** fills the form with the same model, prompt, settings, and pictures, so you can change something and send it again.
+- **Repeat** fills the form with the same model, prompt, settings, and pictures, so you can change something and send it again. For an expanded or upscaled picture, it opens the same dialog again, and for a longer video, it starts the same next part again.
 - **Delete** removes the job from the list. Copies you saved stay in your folders. **Clear history** removes every finished job in the tab.
 
 ## When a job says "Outcome unknown"

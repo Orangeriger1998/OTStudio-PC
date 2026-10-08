@@ -8,6 +8,8 @@ OT Studio makes pictures and videos with your own API keys. This is the Windows 
 - A simple view that shows only the main settings for each model, with every setting one click away.
 - Reference pictures, starting and ending pictures for videos, and a "Make a video" button on every finished picture.
 - History with Save, Open folder, Repeat, and Delete.
+- Picture tools: Edit, Expand to a new shape at full size, and Upscale.
+- Make it longer: continue a video from its last frame, and OT Studio joins the parts.
 - Any other picture or video service: paste the provider's curl, Python, or Node example, say what each field is, and save it. OT Studio reads the example as text. It never runs it.
 - Services can be exported and shared. A shared service never contains a key.
 

@@ -23,3 +23,7 @@ OT Studio sends each paid request once and never repeats it on its own. If the c
 ## Where your files are
 
 Results and the pictures you attach are kept in the app's data folder, %APPDATA%\OT Studio\media. Delete removes them. Save copies a result to your Pictures or Videos folder.
+
+## Work done on your PC
+
+Rebuilding an expanded picture at full size and joining the parts of a longer video happen on your PC, with the bundled sharp and ffmpeg. Those steps send nothing anywhere.

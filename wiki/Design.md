@@ -12,7 +12,14 @@ The left panel is the form:
 - Settings. The simple view shows the main ones, such as shape, resolution, length, and the safety switch. **Show all settings** shows every setting the model has.
 - **Make the picture** or **Make the video**.
 
-The right panel lists jobs as cards, newest first. A card shows the result, its state, the prompt, the model, the service, and the time. OpenRouter cards also show the cost the service reported. The buttons on a card depend on its state: **Save**, **Use as reference**, **Make a video**, **Stop** (Replicate only), **Download again**, **Repeat**, and **Delete**. Clicking a picture opens it full size; the arrow keys move between pictures of one job.
+The right panel lists jobs as cards, newest first. A card shows the result, its state, the prompt, the model, the service, and the time. OpenRouter cards also show the cost the service reported. The buttons on a card depend on its state. A finished picture has **Save**, **Edit**, **Expand**, **Upscale**, **Make a video**, **Use as reference**, **Repeat**, and **Delete**. A finished video has **Save**, **Make it longer**, **Repeat**, and **Delete**. A running Replicate job has **Stop**, and a failed download has **Download again**. Expanded pictures and joined videos show "Finishing" while OT Studio builds them on the PC. Clicking a picture opens it full size; the arrow keys move between pictures of one job.
+
+## Dialogs
+
+- **Expand the picture**: shape buttons, a preview with the new area striped around the picture, an optional description of the new area, and the safety switch (off at first, as for edits).
+- **Upscale the picture**: 2 or 4 times, the resulting size, and "Enhance faces". A picture that is already large gets an explanation and no Upscale button.
+
+When a video is being made longer, the Videos form shows a blue note above the prompt, with "Stop making it longer", and the button reads **Make the next part**.
 
 ## Settings
 

@@ -6,7 +6,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const CHANNELS = [
   'state', 'key:set', 'key:clear', 'settings:set', 'models', 'replicate:add', 'replicate:forget', 'form', 'pictures:pick',
-  'generate', 'cancel', 'remove', 'download:retry', 'save', 'folder:open', 'folder:change',
+  'generate', 'expand', 'upscale', 'media:size', 'video:lastFrame', 'cancel', 'remove', 'download:retry', 'save', 'folder:open', 'folder:change',
   'snippet:parse', 'service:rebuild', 'service:test', 'service:save', 'service:remove', 'service:export', 'service:import',
   'hosts:remove', 'link:open',
 ];

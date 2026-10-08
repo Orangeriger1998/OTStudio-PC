@@ -11,10 +11,16 @@ const replicate = require('../core/replicate');
 const { get, stringPaths } = require('../core/jsonpath');
 const { sniff, NAME_RE, typeOf } = require('./media');
 const { NetError } = require('./netguard');
+const imaging = require('./imaging');
+const video = require('./video');
 
 const REPLICATE = { id: 'replicate', name: 'Replicate', keySlot: 'replicate', keyLabel: 'Replicate', builtin: true, special: true };
 const HISTORY_MAX = 2000;
 const PICTURE_MAX = 30 * 1024 * 1024;
+/** Models the picture tools use on Replicate. They take fixed inputs, so they are not in the model lists. */
+const EXPANDER = 'black-forest-labs/flux-fill-dev';
+const UPSCALER = 'nightmareai/real-esrgan';
+const BUSY_STATES = ['sending', 'running', 'downloading', 'finishing'];
 
 class JobError extends Error {}
 
@@ -152,6 +158,12 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
     const k = key(d);
     for (const names of Object.values(req.pictures || {})) for (const n of names) mediaPath(n);
     const entry = entryFor(kind, d, req);
+    if (req.op && req.op.type === 'longer') {
+      const parent = find(String(req.op.parent));
+      if (!parent || parent.kind !== 'video' || parent.state !== 'done' || !parent.files.length) throw new JobError('The video to continue is gone.');
+      if (kind !== 'video') throw new JobError('Only videos can be made longer.');
+      entry.op = { type: 'longer', parent: parent.id, parentFile: parent.files[0] };
+    }
     let request;
     if (d.special) {
       const controls = await replicateSchema(req.model, kind, false);
@@ -179,14 +191,102 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
   }
 
   async function uploadToReplicate(name, k) {
-    const buf = fs.readFileSync(mediaPath(name));
+    return uploadBuffer(fs.readFileSync(mediaPath(name)), name, typeOf(name), k);
+  }
+
+  async function uploadBuffer(buf, filename, type, k) {
     const form = new FormData();
-    form.append('content', new Blob([buf], { type: typeOf(name) }), name);
+    form.append('content', new Blob([buf], { type }), filename);
     const res = await net.request(`${replicate.BASE}/files`, { method: 'POST', headers: bearer(k), body: form, keyHeaders: ['Authorization'], timeout: 180000 });
     const body = await readJson(res);
     const url = body?.urls?.get;
     if (!res.ok || typeof url !== 'string' || !url.startsWith('https://')) throw new JobError(service.errorText({ result: {} }, body) || 'Replicate did not accept the picture.');
     return url;
+  }
+
+  /** Starts a Replicate job with fixed inputs, for the picture tools. */
+  function startReplicate(entry, model, input, k) {
+    const r = replicate.createRequest(model, input);
+    history.unshift(entry);
+    save();
+    notify(entry);
+    send(entry, REPLICATE, { ...r, headers: { ...bearer(k), 'Content-Type': 'application/json' }, keyHeaders: ['Authorization'] });
+    return entry;
+  }
+
+  function existing(name) {
+    const file = mediaPath(name);
+    if (!fs.existsSync(file)) throw new JobError('That picture is gone.');
+    return file;
+  }
+
+  /** Expand: paints new area around a picture so it takes a new shape, then rebuilds it at full size. */
+  async function expand({ source, ratio, prompt, safety }) {
+    const file = existing(source);
+    const k = key(REPLICATE);
+    const { plan, canvas, mask } = await imaging.expandInputs(file, ratio);
+    const text = String(prompt || '').trim().slice(0, 2000);
+    const entry = {
+      ...entryFor('image', REPLICATE, { model: EXPANDER, prompt: text, options: { shape: ratio }, pictures: { source: [source] } }),
+      op: { type: 'expand', source, ratio, plan, safety: safety !== false },
+    };
+    const image = await uploadBuffer(canvas, 'canvas.png', 'image/png', k);
+    const maskUrl = await uploadBuffer(mask, 'mask.png', 'image/png', k);
+    return startReplicate(entry, EXPANDER, {
+      prompt: text || 'a natural continuation of the photo, with the same light and style',
+      image, mask: maskUrl, megapixels: 'match_input', output_format: 'png', num_inference_steps: 28, disable_safety_checker: safety === false,
+    }, k);
+  }
+
+  /** Upscale with Real-ESRGAN. Pictures that are already large are refused, because the provider's GPU cannot take them. */
+  async function upscale({ source, scale, faceEnhance }) {
+    const file = existing(source);
+    const k = key(REPLICATE);
+    const { width, height } = await imaging.size(file);
+    if (width * height > imaging.UPSCALE_MAX_PIXELS) throw new JobError(`This picture is already large (${width} by ${height}). The upscaler takes pictures of up to about 2 megapixels, such as 1440 by 1440.`);
+    const factor = Number(scale) === 2 ? 2 : 4;
+    const entry = {
+      ...entryFor('image', REPLICATE, { model: UPSCALER, prompt: '', options: { scale: factor, face_enhance: !!faceEnhance }, pictures: { source: [source] } }),
+      op: { type: 'upscale', source, scale: factor, faceEnhance: !!faceEnhance, from: { width, height } },
+    };
+    const image = await uploadToReplicate(source, k);
+    return startReplicate(entry, UPSCALER, { image, scale: factor, face_enhance: !!faceEnhance }, k);
+  }
+
+  /** The size of a picture in the media folder. */
+  async function size(name) {
+    return imaging.size(existing(name));
+  }
+
+  /** The last frame of a finished video, as a picture in the media folder. */
+  async function lastFrame(id) {
+    const e = find(String(id));
+    if (!e || e.kind !== 'video' || e.state !== 'done' || !e.files.length) throw new JobError('That video is not finished.');
+    const name = `in-${crypto.randomUUID()}.png`;
+    await video.lastFrame(mediaPath(e.files[0]), path.join(mediaDir, name));
+    return name;
+  }
+
+  /** The local step after a download: rebuilding an expanded picture, or joining a new part to its video. */
+  async function finish(entry) {
+    if (!entry.op || !['expand', 'longer'].includes(entry.op.type)) return;
+    entry.raw = [...entry.files];
+    update(entry, { state: 'finishing', status: entry.op.type === 'expand' ? 'Rebuilding at full size' : 'Joining the videos' });
+    try {
+      let name;
+      if (entry.op.type === 'expand') {
+        const out = await imaging.expandResult(mediaPath(entry.op.source), fs.readFileSync(mediaPath(entry.raw[0])), entry.op.plan);
+        name = `img-${entry.id.slice(0, 8)}-full.jpg`;
+        fs.writeFileSync(path.join(mediaDir, name), out);
+      } else {
+        name = `vid-${entry.id.slice(0, 8)}-joined.mp4`;
+        await video.join([mediaPath(entry.op.parentFile), mediaPath(entry.raw[0])], path.join(mediaDir, name));
+      }
+      update(entry, { state: 'done', files: [name], status: '', error: undefined });
+    } catch (e) {
+      const what = entry.op.type === 'expand' ? 'The full-size picture could not be built, so this is the smaller result.' : 'The videos could not be joined, so this is the new part alone.';
+      update(entry, { state: 'done', files: entry.raw, status: '', error: `${what} ${e.message}` });
+    }
   }
 
   async function send(entry, d, request) {
@@ -257,7 +357,9 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
       update(entry, { state: 'done', files, error: undefined, finished: now() });
     } catch (e) {
       update(entry, { state: 'failed', files, error: `The result is ready but could not be downloaded. ${e.message}`, canRetryDownload: !!(entry.remote && entry.remote.length), finished: now() });
+      return;
     }
+    await finish(entry);
   }
 
   async function retryDownload(id) {
@@ -315,22 +417,28 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
     for (const e of history) {
       if (e.state === 'sending') { e.state = 'uncertain'; e.error = 'OT Studio closed while sending this job. Check your account at the provider before you try again.'; changed = true; }
       if (e.state === 'downloading') { e.state = 'failed'; e.error = 'OT Studio closed during the download.'; e.canRetryDownload = !!(e.remote && e.remote.length); changed = true; }
+      if (e.state === 'finishing') { e.state = 'done'; e.files = e.raw || e.files; e.error = 'OT Studio closed before this was finished, so this is the unfinished result.'; changed = true; }
       if (e.state === 'running') e.nextPoll = 0;
     }
     if (changed) save();
   }
 
+  /** Every media file an entry refers to. */
+  function namesOf(e) {
+    return [...e.files, ...(e.raw || []), ...Object.values(e.pictures || {}).flat(), e.op && e.op.source, e.op && e.op.parentFile].filter(Boolean);
+  }
+
   function inUse(name) {
-    return history.some((e) => e.files.includes(name) || Object.values(e.pictures || {}).some((l) => l.includes(name)));
+    return history.some((e) => namesOf(e).includes(name));
   }
 
   /** Removes entries and every media file only they use. */
   function remove(ids) {
-    const gone = history.filter((e) => ids.includes(e.id) && e.state !== 'running' && e.state !== 'sending' && e.state !== 'downloading');
+    const gone = history.filter((e) => ids.includes(e.id) && !BUSY_STATES.includes(e.state));
     history = history.filter((e) => !gone.includes(e));
     save();
     for (const e of gone) {
-      for (const name of [...e.files, ...Object.values(e.pictures || {}).flat()]) {
+      for (const name of namesOf(e)) {
         if (!inUse(name)) { try { fs.rmSync(mediaPath(name), { force: true }); } catch { /* a locked file stays; it is harmless */ } }
       }
     }
@@ -356,7 +464,7 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
     return { status: res.status, answer: shorten(answer), paths };
   }
 
-  return { list: () => history, generate, cancel, remove, retryDownload, tick, resume, addPicture, mediaPath, models, form, test, REPLICATE };
+  return { list: () => history, generate, expand, upscale, size, lastFrame, cancel, remove, retryDownload, tick, resume, addPicture, mediaPath, models, form, test, REPLICATE };
 }
 
 /** A copy of [v] with long strings cut, so a test answer with picture data stays readable. */

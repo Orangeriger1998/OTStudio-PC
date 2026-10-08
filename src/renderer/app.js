@@ -20,7 +20,9 @@ function h(tag, props, ...kids) {
 const mediaUrl = (name) => `otmedia://m/${encodeURIComponent(name)}`;
 const KIND_WORD = { image: 'picture', video: 'video' };
 const KEY_NAMES = { replicate: 'Replicate', spicyapi: 'SpicyAPI', openrouter: 'OpenRouter' };
-const STATE_WORDS = { sending: 'Sending', running: 'Working', downloading: 'Downloading', done: 'Done', failed: 'Failed', canceled: 'Stopped', uncertain: 'Outcome unknown' };
+const STATE_WORDS = { sending: 'Sending', running: 'Working', downloading: 'Downloading', finishing: 'Finishing', done: 'Done', failed: 'Failed', canceled: 'Stopped', uncertain: 'Outcome unknown' };
+const BUSY = ['sending', 'running', 'downloading', 'finishing'];
+const TOOL_NAMES = { expand: 'Expand', upscale: 'Upscale', longer: 'Make it longer' };
 
 let S = null;
 const ui = {
@@ -28,7 +30,7 @@ const ui = {
   forms: { image: blank('image'), video: blank('video') },
   adding: false, pasted: '', pastedKind: 'image', draft: null, test: null, testPrompt: 'A red apple on a wooden table', draftError: '', jsonText: '',
 };
-function blank(kind) { return { kind, service: 'replicate', model: '', prompt: '', options: {}, pictures: {}, form: null, models: [], error: '', busy: false, loading: false, newModel: '' }; }
+function blank(kind) { return { kind, service: 'replicate', model: '', prompt: '', options: {}, pictures: {}, form: null, models: [], error: '', busy: false, loading: false, newModel: '', hint: '', continueFrom: null }; }
 
 // ---------- startup ----------
 
@@ -133,6 +135,10 @@ function composer(kind) {
   }
   out.push(modelField);
 
+  if (f.continueFrom) {
+    out.push(h('div', { class: 'message info' }, 'Making a video longer. Its last frame is the starting picture, and the new part is joined to its end when it finishes. ',
+      h('button', { class: 'link', text: 'Stop making it longer', onclick: () => { f.continueFrom = null; render(); } })));
+  } else if (f.hint) out.push(h('div', { class: 'message info' }, f.hint, ' ', h('button', { class: 'link', text: 'Close', onclick: () => { f.hint = ''; render(); } })));
   if (f.loading) out.push(h('div', { class: 'note', text: 'Loading the model settings...' }));
   if (f.error) out.push(h('div', { class: 'message', text: f.error }));
   if (f.error && /key/i.test(f.error)) out.push(h('button', { class: 'btn', text: 'Open Settings', onclick: () => { ui.tab = 'settings'; render(); } }));
@@ -149,7 +155,7 @@ function composer(kind) {
     const hidden = f.form.controls.length - shown.length;
     if (simple && hidden > 0) out.push(h('button', { class: 'link', text: `Show all settings (${hidden} more)`, onclick: () => setSimple(false) }));
     if (!simple && f.form.controls.some((c) => !c.simple)) out.push(h('button', { class: 'link', text: 'Show fewer settings', onclick: () => setSimple(true) }));
-    out.push(h('button', { class: 'btn primary generate', disabled: f.busy, text: f.busy ? 'Sending...' : `Make the ${KIND_WORD[kind]}`, onclick: () => generate(kind) }));
+    out.push(h('button', { class: 'btn primary generate', disabled: f.busy, text: f.busy ? 'Sending...' : f.continueFrom ? 'Make the next part' : `Make the ${KIND_WORD[kind]}`, onclick: () => generate(kind) }));
     out.push(h('div', { class: 'note', text: 'Each request is billed by the service you chose. OT Studio never repeats a request on its own.' }));
   }
   return out;
@@ -237,8 +243,12 @@ async function generate(kind) {
   f.busy = true;
   render();
   try {
-    const entry = await ot.generate({ kind, service: f.service, model: f.model, prompt: f.prompt, options, pictures });
+    const req = { kind, service: f.service, model: f.model, prompt: f.prompt, options, pictures };
+    if (f.continueFrom) req.op = { type: 'longer', parent: f.continueFrom };
+    const entry = await ot.generate(req);
     onJob(entry);
+    f.continueFrom = null;
+    if (f.service === 'replicate' && S.editModels.includes(f.model) && S.settings.editModel !== f.model) S.settings = await ot.settingsSet({ editModel: f.model });
   } catch (e) { f.error = e.message; }
   f.busy = false;
   render();
@@ -271,16 +281,18 @@ function card(e) {
     if (e.kind === 'video') mediaBox.append(h('video', { src: mediaUrl(first), controls: true, preload: 'metadata' }));
     else mediaBox.append(h('img', { src: mediaUrl(first), alt: e.prompt.slice(0, 100), onclick: () => openViewer(e.files, 0) }));
     if (e.files.length > 1) mediaBox.append(h('span', { class: 'count', text: `${e.files.length} ${e.kind === 'video' ? 'videos' : 'pictures'}` }));
-  } else if (['sending', 'running', 'downloading'].includes(e.state)) mediaBox.append(h('div', { class: 'spinner' }));
+  } else if (BUSY.includes(e.state)) mediaBox.append(h('div', { class: 'spinner' }));
   else mediaBox.append(h('div', { class: 'note', text: STATE_WORDS[e.state] || e.state }));
 
   const when = new Date(e.created);
   const meta = [modelName(e), e.serviceName, when.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })];
   if (e.cost !== undefined) meta.push(`cost $${Number(e.cost).toFixed(3)}`);
-  const running = ['sending', 'running', 'downloading'].includes(e.state);
+  const running = BUSY.includes(e.state);
   const body = h('div', { class: 'body' },
     h('div', { class: `state ${e.state}` }, STATE_WORDS[e.state] || e.state, running ? h('span', { class: 'note', 'data-since': String(e.created), text: '' }) : null),
     e.prompt ? h('div', { class: 'prompt', text: e.prompt, title: e.prompt }) : null,
+    e.op && e.op.type === 'upscale' ? h('div', { class: 'prompt', text: `${e.op.scale} times larger${e.op.faceEnhance ? ', faces enhanced' : ''}` }) : null,
+    e.op && e.op.type === 'expand' && !e.prompt ? h('div', { class: 'prompt', text: `Expanded to ${e.op.ratio}` }) : null,
     h('div', { class: 'note', text: meta.join(' · ') }),
     running && e.status ? h('div', { class: 'note', text: e.status }) : null,
     e.error ? h('div', { class: 'message', text: e.error }) : null);
@@ -289,7 +301,13 @@ function card(e) {
   const add = (text, fn, cls = '') => actions.append(h('button', { class: `btn small ${cls}`, text, onclick: fn }));
   if (e.state === 'done') {
     add('Save', () => save(e));
-    if (e.kind === 'image') { add('Use as reference', () => usePicture(e, 'image')); add('Make a video', () => usePicture(e, 'video')); }
+    if (e.kind === 'image') {
+      add('Edit', () => editPicture(e.files[0]));
+      add('Expand', () => openExpand({ source: e.files[0] }));
+      add('Upscale', () => openUpscale({ source: e.files[0] }));
+      add('Make a video', () => usePicture(e, 'video'));
+      add('Use as reference', () => usePicture(e, 'image'));
+    } else add('Make it longer', () => makeLonger(e));
   }
   if (e.state === 'running' && e.service === 'replicate') add('Stop', () => ot.cancel(e.id).catch((x) => snack(x.message)));
   if (e.canRetryDownload && e.state === 'failed') add('Download again', () => ot.downloadRetry(e.id).catch((x) => snack(x.message)));
@@ -298,6 +316,7 @@ function card(e) {
 }
 
 function modelName(e) {
+  if (e.op && TOOL_NAMES[e.op.type] && e.op.type !== 'longer') return TOOL_NAMES[e.op.type];
   const f = ui.forms[e.kind];
   const m = f && f.service === e.service ? f.models.find((x) => x.id === e.model) : null;
   return m ? m.name : e.model;
@@ -330,7 +349,7 @@ async function removeEntries(ids) {
 }
 
 function clearHistory(kind) {
-  const ids = S.history.filter((e) => e.kind === kind && !['sending', 'running', 'downloading'].includes(e.state)).map((e) => e.id);
+  const ids = S.history.filter((e) => e.kind === kind && !BUSY.includes(e.state)).map((e) => e.id);
   if (!ids.length) return;
   if (!window.confirm(`Remove all ${ids.length} ${KIND_WORD[kind]}s from this list? Copies you saved to your folders stay where they are.`)) return;
   removeEntries(ids);
@@ -356,6 +375,12 @@ function usePicture(e, kind) {
 
 /** Fills the form with a job's prompt, model, settings, and pictures, ready to change and send again. */
 async function repeat(e) {
+  if (e.op && e.op.type === 'expand') return openExpand({ source: e.op.source, ratio: e.op.ratio, prompt: e.prompt, safety: e.op.safety });
+  if (e.op && e.op.type === 'upscale') return openUpscale({ source: e.op.source, scale: e.op.scale, faceEnhance: e.op.faceEnhance });
+  if (e.op && e.op.type === 'longer') {
+    const parent = S.history.find((x) => x.id === e.op.parent && x.state === 'done');
+    if (parent) return makeLonger(parent, e);
+  }
   ui.tab = e.kind;
   const f = ui.forms[e.kind];
   if (e.service !== f.service || e.model !== f.model) {
@@ -372,6 +397,147 @@ async function repeat(e) {
   if (box) { box.focus(); box.scrollIntoView({ block: 'center' }); }
 }
 
+// ---------- picture and video tools ----------
+
+/** Opens the Pictures form on the editing model last used, with this picture in it. */
+async function editPicture(name) {
+  ui.tab = 'image';
+  const f = ui.forms.image;
+  const model = S.settings.editModel || 'black-forest-labs/flux-kontext-dev';
+  render();
+  await chooseService('image', 'replicate', model);
+  if (f.model !== model) { f.model = model; await loadForm('image', false); }
+  const target = f.form && f.form.pictures[0];
+  if (!target) { render(); return; }
+  f.pictures = { [target.name]: [name] };
+  f.prompt = '';
+  f.options = {};
+  f.hint = target.max > 1
+    ? `Describe the change. You can add up to ${target.max - 1} more pictures as references.`
+    : 'Describe the change. For several reference pictures, choose Seedream 4.5, FLUX.2 dev, or Qwen Image Edit Plus.';
+  render();
+  const box = document.getElementById('prompt-image');
+  if (box) box.focus();
+}
+
+/** Starts a longer version of a video: its last frame becomes the starting picture of the next part. */
+async function makeLonger(e, previous) {
+  ui.tab = 'video';
+  const f = ui.forms.video;
+  snack('Taking the last frame of the video...');
+  let frame;
+  try { frame = await ot.videoLastFrame(e.id); } catch (x) { snack(x.message); return; }
+  const usable = e.service === 'replicate' || S.services.some((s) => s.id === e.service);
+  if (usable && (f.service !== e.service || f.model !== e.model)) {
+    await chooseService('video', e.service, e.model);
+    if (f.model !== e.model && e.service === 'replicate') { f.model = e.model; await loadForm('video', false); }
+  }
+  const inputs = f.form ? f.form.pictures : [];
+  const target = inputs.find((p) => ['first_frame', 'image', 'start_image', 'first_frame_image'].includes(p.name)) || inputs[0];
+  if (!target) {
+    f.error = 'This model does not start from a picture. Choose one that does, such as Wan 2.2 from a picture or Wan 2.7 on OpenRouter, then click Make it longer again.';
+    render();
+    return;
+  }
+  const source = previous || e;
+  f.options = { ...(source.options || {}) };
+  f.pictures = { [target.name]: [frame] };
+  f.prompt = source.prompt || '';
+  f.continueFrom = e.id;
+  f.error = '';
+  document.getElementById('snack').hidden = true;
+  render();
+  const box = document.getElementById('prompt-video');
+  if (box) { box.focus(); box.scrollIntoView({ block: 'center' }); }
+}
+
+function openModal(title, ...body) {
+  const m = document.getElementById('modal');
+  const panel = h('div', { class: 'panel', onclick: (ev) => ev.stopPropagation() }, h('h2', { text: title }), ...body);
+  m.replaceChildren(panel);
+  m.hidden = false;
+  m.onclick = closeModal;
+  return panel;
+}
+function closeModal() { document.getElementById('modal').hidden = true; }
+
+const SHAPES = [['16:9', 'Wide'], ['9:16', 'Tall'], ['1:1', 'Square'], ['4:3', '4:3'], ['3:4', '3:4'], ['3:2', '3:2'], ['2:3', '2:3'], ['21:9', 'Very wide']];
+
+/** The Expand dialog: choose the new shape, see where the picture sits, and describe the new area if you like. */
+async function openExpand({ source, ratio, prompt, safety }) {
+  let size;
+  try { size = await ot.mediaSize(source); } catch (x) { snack(x.message); return; }
+  const st = { ratio: ratio || (size.width >= size.height ? '9:16' : '16:9'), prompt: prompt || '', safety: safety === true, error: '', busy: false };
+  const preview = h('div', { class: 'shape' });
+  const shapes = h('div', { class: 'chips' });
+  const errorBox = h('div', { class: 'message', hidden: true });
+  const go = h('button', { class: 'btn primary', text: 'Expand' });
+  function draw() {
+    const [rw, rh] = st.ratio.split(':').map(Number);
+    const target = rw / rh;
+    const cur = size.width / size.height;
+    const same = Math.abs(target - cur) / cur < 0.02;
+    let cw = size.width; let ch = size.height;
+    if (target > cur) cw = size.height * target; else ch = size.width / target;
+    preview.style.setProperty('aspect-ratio', `${rw} / ${rh}`);
+    preview.style.setProperty('width', target >= 1 ? '100%' : `min(100%, calc(46vh * ${target.toFixed(4)}))`);
+    const pic = h('img', { src: mediaUrl(source), alt: '' });
+    pic.style.setProperty('left', `${((cw - size.width) / 2 / cw) * 100}%`);
+    pic.style.setProperty('top', `${((ch - size.height) / 2 / ch) * 100}%`);
+    pic.style.setProperty('width', `${(size.width / cw) * 100}%`);
+    pic.style.setProperty('height', `${(size.height / ch) * 100}%`);
+    preview.replaceChildren(pic);
+    shapes.replaceChildren(...SHAPES.map(([r, label]) => h('button', { class: `chip plain ${r === st.ratio ? 'on' : ''}`, text: label === r ? r : `${label} ${r}`, onclick: () => { st.ratio = r; draw(); } })));
+    go.disabled = same || st.busy;
+    errorBox.hidden = !st.error && !same;
+    errorBox.textContent = same ? 'The picture already has this shape. Choose another.' : st.error;
+  }
+  go.onclick = async () => {
+    st.busy = true; st.error = ''; go.textContent = 'Sending...'; draw();
+    try { const entry = await ot.expand({ source, ratio: st.ratio, prompt: st.prompt, safety: st.safety }); onJob(entry); closeModal(); ui.tab = 'image'; render(); }
+    catch (x) { st.error = x.message; st.busy = false; go.textContent = 'Expand'; draw(); }
+  };
+  openModal('Expand the picture',
+    h('div', { class: 'note', text: `Your picture is ${size.width} by ${size.height}. FLUX Fill dev on Replicate paints the new area, and OT Studio keeps your picture's own pixels in the middle. About 4 cents.` }),
+    shapes, preview,
+    h('label', { class: 'field' }, h('span', { class: 'name', text: 'What fills the new area (optional)' }),
+      h('input', { type: 'text', value: st.prompt, placeholder: 'For example: more of the beach and the sea', oninput: (ev) => { st.prompt = ev.target.value; } })),
+    h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: st.safety, onchange: (ev) => { st.safety = ev.target.checked; } }), h('span', { text: 'Safety checker on' })),
+    errorBox,
+    h('div', { class: 'row' }, go, h('button', { class: 'btn', text: 'Cancel', onclick: closeModal })));
+  draw();
+}
+
+/** The Upscale dialog. Pictures over about 2 megapixels are already large, and the upscaler cannot take them. */
+async function openUpscale({ source, scale, faceEnhance }) {
+  let size;
+  try { size = await ot.mediaSize(source); } catch (x) { snack(x.message); return; }
+  const st = { scale: scale || 4, face: !!faceEnhance };
+  const large = size.width * size.height > 2096704;
+  const result = h('div', { class: 'note' });
+  const go = h('button', { class: 'btn primary', text: 'Upscale', disabled: large });
+  const errorBox = h('div', { class: 'message', hidden: true });
+  const scales = h('div', { class: 'chips' });
+  function draw() {
+    scales.replaceChildren(...[2, 4].map((n) => h('button', { class: `chip plain ${st.scale === n ? 'on' : ''}`, text: `${n} times`, onclick: () => { st.scale = n; draw(); } })));
+    result.textContent = large ? '' : `The result is ${size.width * st.scale} by ${size.height * st.scale}.`;
+  }
+  go.onclick = async () => {
+    go.disabled = true; go.textContent = 'Sending...';
+    try { const entry = await ot.upscale({ source, scale: st.scale, faceEnhance: st.face }); onJob(entry); closeModal(); ui.tab = 'image'; render(); }
+    catch (x) { errorBox.hidden = false; errorBox.textContent = x.message; go.disabled = false; go.textContent = 'Upscale'; }
+  };
+  openModal('Upscale the picture',
+    large
+      ? h('div', { class: 'message info', text: `This picture is already large: ${size.width} by ${size.height}. The upscaler takes pictures of up to about 2 megapixels, such as 1440 by 1440, so it has nothing to add here.` })
+      : h('div', { class: 'note', text: `Your picture is ${size.width} by ${size.height}. Real-ESRGAN on Replicate makes it larger and sharper.` }),
+    large ? null : scales, result,
+    large ? null : h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: st.face, onchange: (ev) => { st.face = ev.target.checked; } }), h('span', { text: 'Enhance faces' })),
+    errorBox,
+    h('div', { class: 'row' }, large ? null : go, h('button', { class: 'btn', text: large ? 'Close' : 'Cancel', onclick: closeModal })));
+  draw();
+}
+
 // ---------- viewer and messages ----------
 
 let viewer = null;
@@ -383,6 +549,7 @@ function showViewer() {
 }
 function closeViewer() { viewer = null; document.getElementById('viewer').hidden = true; }
 function onKey(e) {
+  if (e.key === 'Escape' && !document.getElementById('modal').hidden) { closeModal(); return; }
   if (!viewer) return;
   if (e.key === 'Escape') closeViewer();
   if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { viewer.index = (viewer.index + (e.key === 'ArrowRight' ? 1 : -1) + viewer.files.length) % viewer.files.length; showViewer(); }

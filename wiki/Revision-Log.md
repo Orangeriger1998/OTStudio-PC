@@ -1,5 +1,13 @@
 # Revision Log
 
+## 0.2.0 (2026-10-08)
+
+- Edit: opens a picture with the editing model you used last, ready for a description of the change and more reference pictures.
+- Expand: gives a picture a new shape with FLUX Fill dev, then rebuilds it at full size with the original pixels kept.
+- Upscale: 2 or 4 times with Real-ESRGAN. Pictures that are already large get a plain explanation instead.
+- Make it longer: the last frame of a video starts the next part, and OT Studio joins the parts into one video with its bundled ffmpeg.
+- Repeat on these jobs opens the same tool again with the same choices.
+
 ## 0.1.0 (2026-10-07)
 
 - First version of OT Studio for Windows, with Pictures, Videos, and Settings.
