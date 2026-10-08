@@ -928,8 +928,12 @@ function chatBubble(m) {
   if (m.text) box.append(h('div', { text: m.text }));
   if (m.plan) {
     const plan = h('div', { class: 'plan' },
+      // (the picture this plan uses, then what will happen, the settings, the notes, and the price)
       m.plan.source ? h('div', { class: 'row' }, h('div', { class: 'pic' }, h('img', { src: mediaUrl(m.plan.source), alt: '' })), h('span', { class: 'note', text: m.plan.sourceKind === 'attached' ? 'Your photo' : 'The last picture' })) : null,
-      h('div', {}, h('strong', { text: m.summary })), m.plan.prompt ? h('div', { class: 'note', text: `"${m.plan.prompt}"` }) : null, h('div', { class: 'note', text: `Price: ${m.price}.` }));
+      h('div', {}, h('strong', { text: m.summary })),
+      m.settingsLine ? h('div', { class: 'settings-line', text: m.settingsLine }) : null,
+      m.notesLine ? h('div', { class: 'note warn', text: m.notesLine }) : null,
+      m.plan.prompt ? h('div', { class: 'note', text: `"${m.plan.prompt}"` }) : null, h('div', { class: 'note', text: `Price: ${m.price}.` }));
     if (m.state === 'proposed') plan.append(h('div', { class: 'row' }, h('button', { class: 'btn primary small', text: 'Go', onclick: () => goPlan(m.id) }), h('button', { class: 'btn small', text: 'Cancel', onclick: () => ot.chatCancel(m.id) }), h('span', { class: 'note', text: 'Enter also means Go.' })));
     else if (m.state === 'starting') plan.append(h('div', { class: 'note', text: 'Sending...' }));
     else if (m.state === 'canceled') plan.append(h('div', { class: 'note', text: 'Not sent.' }));

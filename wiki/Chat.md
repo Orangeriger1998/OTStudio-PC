@@ -37,9 +37,28 @@ Type what you want and press Enter. Some examples:
 
 Click **Photo** to attach your own pictures. A photo attached to a message is the one that message changes; otherwise the chat uses your latest picture or video.
 
+## Settings in your message
+
+Name a setting in your message, and OT Studio puts it into the request for the model you use. OT Studio reads these from your own words, not from the chat model, and checks each value against what the model allows. Some examples:
+
+- Shape: "4:3", "16x9", "3 by 2", "wide", "tall", or "square". A model without that exact shape gets its closest one, and the plan says so.
+- Number of pictures: "3 pictures" or "two versions".
+- Length and sound: "10 seconds", "with sound", or "no sound".
+- Resolution and size: "720p", "1080p", or "4K" (Seedream).
+- Safety: "safety off" or "safety on". For FLUX 1.1 pro, which has a tolerance instead of a switch, "safety off" sets the most permissive tolerance.
+- Seed, steps, and guidance: "seed 42", "30 steps", or "guidance 4".
+- File: "as PNG" or "quality 95".
+- Style (SpicyAPI): "anime style".
+- What to keep out: "negative prompt: blurry, text".
+- Any other setting by its name on the model's card, such as "prompt strength 0.7", "LoRA strength 0.8", or "fast mode off".
+
+For Upscale, "2x" or "twice" makes the picture two times larger instead of four, and "faces" turns on face enhancement. For Expand, "safety on" turns the safety checker on.
+
+The plan lists every setting it will send, for example "Settings: Shape 9:16 · Seed 42 · Length 10 seconds · Resolution 1080p · Sound on." If you name a setting the model does not have, the plan says so ("Not on this model: Sound."). If a value is outside what the model allows, the plan says that it stays at the model's default, and why.
+
 ## Nothing is billed until you click Go
 
-Each request shows one line: what OT Studio will do, which picture it uses, the model, and the price. Click **Go**, or press Enter in the empty message box, to start it. **Cancel** drops it. Sending a new message sets older unused plans aside.
+Each request shows a plan: what OT Studio will do, which picture it uses, the model, the settings, and the price. For OpenRouter videos, the price is worked out from OpenRouter's own price per second for that model and length. Click **Go**, or press Enter in the empty message box, to start it. **Cancel** drops it. Sending a new message sets older unused plans aside.
 
 The chat model only chooses what to do, the shape, the length, and the words for the prompt. OT Studio uses the picture, edit, and video models from **Models the chat uses**, FLUX Fill dev for Expand, and Real-ESRGAN for Upscale. If a video starts from a picture and the chosen video model cannot take one, the chat uses Wan 2.2 from a picture instead, and the plan says so.
 

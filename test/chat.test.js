@@ -30,12 +30,12 @@ test('plans: continuing a video and shapes are corrected by plain rules', () => 
   assert.equal(chatplan.resolve(raw({ action: 'make_longer', prompt: 'continue the video' }), 'make the video longer', ctx).prompt, 'she walks', 'a bare request keeps the earlier description');
   assert.equal(chatplan.resolve(raw({ action: 'expand', shape: 'keep', prompt: 'keep' }), 'make it taller for my phone screen', ctx).shape, '9:16');
   assert.equal(chatplan.resolve(raw({ action: 'expand', shape: 'wide', prompt: 'keep' }), 'make it wide', ctx).prompt, '', 'filler prompts are dropped for expand');
-  assert.deepEqual(chatplan.resolve(raw({ action: 'expand', shape: 'keep' }), 'expand it', ctx), { error: 'Which shape should the picture take: wide, tall, or square?' });
+  assert.deepEqual(chatplan.resolve(raw({ action: 'expand', shape: 'keep' }), 'expand it', ctx), { error: 'Which shape should the picture take: wide, tall, square, or a ratio such as 4:3?' });
   assert.equal(chatplan.resolve(raw({ action: 'make_video', prompt: 'waves', seconds: 500 }), 'waves', ctx).seconds, 0, 'odd lengths are ignored');
   assert.deepEqual(chatplan.resolve({ action: 'rm -rf' }, 'x', ctx), { action: 'answer' }, 'unknown actions do nothing');
 });
 
-function setup({ plan, reply = 'A LoRA teaches the model a face.' }) {
+function setup({ plan, reply = 'A LoRA teaches the model a face.', picks = {} }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otchat-'));
   const started = [];
   const history = [pic, vid];
@@ -43,12 +43,13 @@ function setup({ plan, reply = 'A LoRA teaches the model a face.' }) {
     list: () => history,
     mediaPath: (n) => path.join(dir, n),
     form: async (service, model, kind) => (kind === 'image'
-      ? { controls: [{ name: 'aspect_ratio', type: 'choice', choices: ['1:1', '16:9', '9:16'] }, { name: 'disable_safety_checker', type: 'switch', default: true }], pictures: model.includes('kontext') ? [{ name: 'input_image', max: 1 }] : [] }
-      : { controls: [{ name: 'duration', type: 'number', min: 2, max: 10 }], pictures: [{ name: 'image', max: 1, required: true }] }),
+      ? { controls: [{ name: 'aspect_ratio', type: 'choice', choices: model.includes('schnell') ? ['1:1', '16:9', '9:16'] : ['1:1', '4:3', '16:9', '9:16'] }, { name: 'disable_safety_checker', type: 'switch', default: true }], pictures: model.includes('kontext') ? [{ name: 'input_image', max: 1 }] : [] }
+      : { controls: [{ name: 'duration', type: 'number', min: 2, max: 10 }], pictures: [{ name: 'image', max: 1, required: !model.includes('alibaba') }] }),
     generate: async (req) => { started.push(req); const e = { id: `j${started.length}`, kind: req.kind, state: 'running', files: [], prompt: req.prompt }; history.unshift(e); return e; },
     expand: async (req) => { started.push({ expand: req }); return { id: 'x1' }; },
     upscale: async (req) => { started.push({ upscale: req }); return { id: 'u1' }; },
     lastFrame: async () => 'in-frame.png',
+    info: (svc, model) => (model === 'alibaba/wan-2.7' ? { pricing_skus: { duration_seconds: '0.1' } } : null),
     mark: (id, patch) => { const e = history.find((x) => x.id === id); if (e) Object.assign(e, patch); },
     remove: (ids) => { const gone = history.filter((e) => ids.includes(e.id)); gone.forEach((g) => history.splice(history.indexOf(g), 1)); return gone.map((g) => g.id); },
     discard: () => {},
@@ -57,7 +58,7 @@ function setup({ plan, reply = 'A LoRA teaches the model a face.' }) {
   const chat = createChat({
     store: createStore(path.join(dir, 'data')), jobs, services: () => [],
     llm: { plan: async () => plan, reply: async () => reply },
-    settings: () => ({ chatModel: 'gemma4-e2b:latest', last: {}, editModel: 'black-forest-labs/flux-kontext-dev' }),
+    settings: () => ({ chatModel: 'gemma4-e2b:latest', last: {}, chatPicks: picks, editModel: 'black-forest-labs/flux-kontext-dev' }),
     trash: async (p) => { trashed.push(p); return true; }, notify: () => {},
   });
   return { chat, started, history, trashed };
@@ -122,4 +123,51 @@ test('only the local Ollama port is reachable without https', async () => {
   await assert.rejects(net.request('http://127.0.0.1:8080/x'), /not allowed/);
   await assert.rejects(net.request('http://localhost.evil.com:11434/x'), /not allowed/);
   await assert.rejects(net.request('http://192.168.1.5:11434/api/tags'), /not allowed/);
+});
+
+test('a ratio the user types reaches the model shape setting, even when the chat model leaves it in the prompt', async () => {
+  const words = 'A professional studio photo of a bald man with black glasses. 4:3 aspect ratio.';
+  const plan = chatplan.resolve(raw({ action: 'make_picture', shape: 'keep', prompt: words }), words, { attached: [] });
+  assert.equal(plan.shape, '4:3');
+  assert.equal(plan.prompt, 'A professional studio photo of a bald man with black glasses.');
+  assert.equal(chatplan.ratioFromText('a city skyline at 10:30 pm'), null, 'clock times are not shapes');
+  assert.equal(chatplan.nearestRatio('4:3', ['match_input_image', '1:1', '16:9', '3:2']), '3:2');
+  assert.equal(chatplan.resolve(raw({ action: 'expand', shape: 'keep' }), 'expand it to 7:5', { attached: [], lastPicture: pic }).shape, '4:3', 'expand takes the closest shape it knows');
+
+  const s = setup({ plan: raw({ action: 'make_picture', shape: 'keep', prompt: words }) });
+  const m = await s.chat.send(words);
+  assert.equal(m.settingsLine, 'Settings: Shape 4:3.');
+  await s.chat.go(m.id);
+  assert.equal(s.started[0].options.aspect_ratio, '4:3');
+
+  // A model without 4:3 gets its closest shape, and the plan line says so before Go.
+  const t = setup({ plan: raw({ action: 'make_picture', shape: 'keep', prompt: words }), picks: { image: { service: 'replicate', model: 'black-forest-labs/flux-schnell' } } });
+  const n = await t.chat.send(words);
+  assert.equal(n.settingsLine, 'Settings: Shape 16:9 (the closest this model offers to 4:3).');
+  await t.chat.go(n.id);
+  assert.equal(t.started[0].options.aspect_ratio, '16:9');
+});
+
+test('settings named in a message reach the request and the Go line; ones the model lacks are named', async () => {
+  const words = 'a lighthouse at dusk, 4:3, safety off, with sound';
+  const s = setup({ plan: raw({ action: 'make_picture', prompt: 'a lighthouse at dusk' }) });
+  const m = await s.chat.send(words);
+  assert.equal(m.settingsLine, 'Settings: Shape 4:3 · Safety checker off.');
+  assert.equal(m.notesLine, 'Not on this model: Sound.');
+  await s.chat.go(m.id);
+  assert.equal(s.started[0].options.aspect_ratio, '4:3');
+  assert.equal(s.started[0].options.disable_safety_checker, true);
+
+  const u = setup({ plan: raw({ action: 'upscale' }) });
+  const n = await u.chat.send('upscale it 2x and enhance the faces');
+  assert.equal(n.settingsLine, 'Settings: 2 times larger · Faces enhanced.');
+  await u.chat.go(n.id);
+  assert.deepEqual(u.started[0], { upscale: { source: 'img-p1-0.png', scale: 2, faceEnhance: true } });
+});
+
+test('an OpenRouter video price comes from its own per-second price and the length asked for', async () => {
+  const s = setup({ plan: raw({ action: 'make_video', prompt: 'waves at night' }), picks: { video: { service: 'replicate', model: 'alibaba/wan-2.7' } } });
+  const m = await s.chat.send('waves at night, 10 seconds');
+  assert.equal(m.price, 'about $1.00');
+  assert.ok(m.settingsLine.includes('Length 10 seconds'));
 });

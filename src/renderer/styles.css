@@ -141,3 +141,5 @@ select.chat-model { width: 100%; }
 .chat-picks { display: flex; flex-direction: column; gap: 8px; }
 .chat-picks select { width: 100%; }
 .composer .field > .btn { align-self: flex-start; }
+.settings-line { color: var(--accent); font-size: 13px; }
+.note.warn { color: #f0c27a; }

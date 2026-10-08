@@ -520,7 +520,9 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
     }
   }
 
-  return { list: () => history, uploadBuffer, mark, discard, generate, expand, upscale, size, lastFrame, cancel, remove, retryDownload, tick, resume, addPicture, mediaPath, models, form, test, REPLICATE };
+  function info(id, model) { try { const d = def(id); return d.special ? null : modelInfo(d, model); } catch { return null; } }
+
+  return { list: () => history, info, uploadBuffer, mark, discard, generate, expand, upscale, size, lastFrame, cancel, remove, retryDownload, tick, resume, addPicture, mediaPath, models, form, test, REPLICATE };
 }
 
 /** A copy of [v] with long strings cut, so a test answer with picture data stays readable. */

@@ -6,6 +6,7 @@
 const crypto = require('crypto');
 const chatplan = require('../core/chatplan');
 const replicate = require('../core/replicate');
+const settingwords = require('../core/settingwords');
 
 const PRICES = {
   'black-forest-labs/flux-schnell': 'about 0.3 cents', 'black-forest-labs/flux-dev': 'about 2.5 cents', 'black-forest-labs/flux-1.1-pro': 'about 4 cents',
@@ -32,9 +33,33 @@ function createChat({ store, jobs, llm, settings, services, trash, notify, now =
     const d = services().find((s) => s.id === id);
     return d ? d.name : id;
   }
-  function modelName(model) {
+  function modelName(model, serviceId) {
     for (const kind of ['image', 'video']) { const m = replicate.MODELS[kind].find(([id]) => id === model); if (m) return m[1]; }
-    return model;
+    const d = serviceId ? services().find((s) => s.id === serviceId) : null;
+    const fixed = d && d.models && (d.models.fixed || []).find((m) => m.id === model);
+    return fixed ? fixed.name : model;
+  }
+
+  /**
+   * An estimate from the provider's own per-second video prices (OpenRouter lists them per model), or null.
+   * Prices are dollars per second unless the name says cents; sound and resolution pick the matching price.
+   */
+  function videoPrice(pick, settings) {
+    const info = jobs.info(pick.service, pick.model);
+    const skus = info && info.pricing_skus;
+    if (!skus || typeof skus !== 'object') return null;
+    const seconds = Number(settings.duration || settings.seconds || (pick.form.controls.find((c) => c.name === 'duration') || {}).default);
+    if (!(seconds > 0)) return null;
+    const res = String(settings.resolution || (pick.form.controls.find((c) => c.name === 'resolution') || {}).default || '').toLowerCase();
+    const sound = settings.generate_audio === true;
+    const keys = Object.keys(skus).filter((k) => /duration_seconds|output_second/.test(k) && !/^text_to_video|^image_to_video/.test(k));
+    const score = (k) => (res && k.includes(res) ? 2 : /\d{3,4}p|\dk/i.test(k) ? -5 : 0) + (sound ? (/with_audio/.test(k) ? 2 : /without_audio/.test(k) ? -5 : 0) : (/without_audio/.test(k) ? 1 : /with_audio/.test(k) ? -3 : 0));
+    const best = keys.sort((a, b) => score(b) - score(a))[0];
+    if (!best) return null;
+    const perSecond = Number(skus[best]) / (/cents/.test(best) ? 100 : 1);
+    if (!Number.isFinite(perSecond) || perSecond <= 0) return null;
+    const dollars = perSecond * seconds;
+    return dollars < 1 ? `about ${Math.round(dollars * 100)} cents` : `about $${dollars.toFixed(2)}`;
   }
 
   function context(attached) {
@@ -80,14 +105,13 @@ function createChat({ store, jobs, llm, settings, services, trash, notify, now =
     const what = ACTION_WORDS[plan.action];
     const src = plan.sourceKind === 'attached' ? 'your photo' : plan.source ? 'the last picture' : '';
     if (plan.action === 'expand') return { line: `${what} ${src} to ${SHAPE_WORDS[plan.shape] || plan.shape} with FLUX Fill dev on Replicate.`, price: 'about 4 cents' };
-    if (plan.action === 'upscale') return { line: `${what} ${src} 4 times with Real-ESRGAN on Replicate.`, price: 'less than 1 cent' };
-    const where = `${modelName(pick.model)} on ${serviceName(pick.service)}`;
-    const len = plan.seconds ? `, ${plan.seconds} seconds` : '';
+    if (plan.action === 'upscale') return { line: `${what} ${src} with Real-ESRGAN on Replicate.`, price: 'less than 1 cent' };
+    const where = `${modelName(pick.model, pick.service)} on ${serviceName(pick.service)}`;
     const lines = {
       make_picture: `${what} with ${where}.`,
       edit: `${what} ${src} with ${where}.`,
-      make_video: `${what}${src ? ` from ${src}` : ''} with ${where}${len}.`,
-      make_longer: `${what}: the next part starts from its last frame, with ${where}${len}.`,
+      make_video: `${what}${src ? ` from ${src}` : ''} with ${where}.`,
+      make_longer: `${what}: the next part starts from its last frame, with ${where}.`,
     };
     return { line: lines[plan.action], price: PRICES[pick.model] || `billed by ${serviceName(pick.service)}` };
   }
@@ -116,9 +140,82 @@ function createChat({ store, jobs, llm, settings, services, trash, notify, now =
     if (!['expand', 'upscale'].includes(plan.action)) {
       try { pick = await choose(plan); } catch (e) { return add({ role: 'assistant', text: e.message, error: true }); }
     }
-    const { line, price } = summary(plan, pick || {});
+    // Every setting named in the message, read from the user's own words and checked against the chosen model.
+    const shown = [];
+    const notes = [];
+    if (pick) {
+      if (plan.shape && plan.action !== 'make_longer') {
+        const used = applyShape({}, pick.form.controls, plan.shape);
+        if (used === null) notes.push(`${modelName(pick.model)} has no shape setting, so it chooses its own shape.`);
+        else shown.push(used === plan.shape ? `Shape ${used}` : `Shape ${used} (the closest this model offers to ${plan.shape})`);
+      }
+      const ext = settingwords.extract(words, pick.form.controls);
+      plan.settings = ext.set;
+      shown.push(...ext.shown);
+      const lengthSet = ['duration', 'seconds', 'video_length', 'num_frames'].some((n) => n in ext.set);
+      if (plan.seconds && pick.kind === 'video' && !lengthSet) {
+        const o = {};
+        setOption(o, pick.form.controls, 'duration', plan.seconds);
+        if ('duration' in o) { plan.settings.duration = o.duration; shown.push(`Length ${o.duration}`); }
+      }
+      if (ext.missing.length) notes.push(`Not on this model: ${ext.missing.join(', ')}.`);
+      if (ext.problems.length) notes.push(`Left at the model default: ${ext.problems.join('; ')}.`);
+      plan.prompt = settingwords.stripSettingWords(plan.prompt) || plan.prompt;
+    } else if (plan.action === 'upscale') {
+      plan.scale = /\b(2\s*x|x\s*2|2 times|two times|twice|double)\b/i.test(words) ? 2 : 4;
+      plan.faceEnhance = /\bfaces?\b/i.test(words);
+      shown.push(`${plan.scale} times larger`);
+      if (plan.faceEnhance) shown.push('Faces enhanced');
+    } else if (plan.action === 'expand') {
+      plan.safety = /\b(safety|nsfw)\s*(checker|filter)?\s*(on|enabled)\b/i.test(words);
+      shown.push(`Shape ${plan.shape}`);
+      if (/\b(safety|nsfw)\b/i.test(words)) shown.push(`Safety checker ${plan.safety ? 'on' : 'off'}`);
+    }
+    const { line, price: listed } = summary(plan, pick || {});
+    const estimate = pick && pick.kind === 'video' ? videoPrice(pick, plan.settings || {}) : null;
+    const price = estimate || listed;
     // The model's own sentence is left out: small models often say the work is already done.
-    return add({ role: 'assistant', text: '', plan: { ...plan, service: pick && pick.service, model: pick && pick.model }, summary: line, price, state: 'proposed' });
+    return add({
+      role: 'assistant', text: '', plan: { ...plan, service: pick && pick.service, model: pick && pick.model }, summary: line, price, state: 'proposed',
+      settingsLine: shown.length ? `Settings: ${shown.join(' · ')}.` : '', notesLine: notes.join(' '),
+    });
+  }
+
+  /**
+   * Puts [ratio] ("4:3") into the model's own shape setting: its aspect ratio list (the closest entry when the exact
+   * one is missing), else a size list such as "1216*832", else width and height. Returns what was set, for the plan
+   * line, or null when the model has no shape setting.
+   */
+  function applyShape(options, controls, ratio) {
+    if (!ratio) return null;
+    const aspect = controls.find((c) => c.name === 'aspect_ratio' && c.type === 'choice');
+    if (aspect) {
+      const exact = (aspect.choices || []).find((x) => String(x) === ratio);
+      const pick = exact !== undefined ? exact : chatplan.nearestRatio(ratio, (aspect.choices || []).map(String));
+      if (pick !== null && pick !== undefined) { options.aspect_ratio = (aspect.choices || []).find((x) => String(x) === String(pick)); return String(pick); }
+    }
+    const size = controls.find((c) => c.name === 'size' && c.type === 'choice');
+    if (size) {
+      const pick = chatplan.nearestRatio(ratio, (size.choices || []).map(String));
+      if (pick) { options.size = (size.choices || []).find((x) => String(x) === pick); return pick.replace('*', ' by '); }
+    }
+    const w = controls.find((c) => c.name === 'width' && c.type === 'number');
+    const hgt = controls.find((c) => c.name === 'height' && c.type === 'number');
+    if (w && hgt) {
+      const [a, b] = ratio.split(':').map(Number);
+      const long = Math.min(w.max || 1440, hgt.max || 1440, 1440);
+      const round16 = (n) => Math.max(16, Math.round(n / 16) * 16);
+      const width = round16(a >= b ? long : (long * a) / b);
+      const height = round16(a >= b ? (long * b) / a : long);
+      if ((w.min === undefined || width >= w.min) && (hgt.min === undefined || height >= hgt.min)) {
+        options.width = width;
+        options.height = height;
+        const custom = controls.find((c) => (c.name === 'aspect_ratio' || c.name === 'size') && (c.choices || []).includes('custom'));
+        if (custom) options[custom.name] = 'custom';
+        return `${width} by ${height}`;
+      }
+    }
+    return null;
   }
 
   function setOption(options, controls, name, value) {
@@ -138,8 +235,8 @@ function createChat({ store, jobs, llm, settings, services, trash, notify, now =
     save();
     try {
       let entry;
-      if (plan.action === 'expand') entry = await jobs.expand({ source: plan.source, ratio: plan.shape, prompt: plan.prompt, safety: false });
-      else if (plan.action === 'upscale') entry = await jobs.upscale({ source: plan.source, scale: 4 });
+      if (plan.action === 'expand') entry = await jobs.expand({ source: plan.source, ratio: plan.shape, prompt: plan.prompt, safety: plan.safety === true });
+      else if (plan.action === 'upscale') entry = await jobs.upscale({ source: plan.source, scale: plan.scale || 4, faceEnhance: !!plan.faceEnhance });
       else {
         const pick = await choose(plan);
         const { controls, pictures: inputs } = pick.form;
@@ -165,8 +262,9 @@ function createChat({ store, jobs, llm, settings, services, trash, notify, now =
           const target = inputs.find((p) => START_INPUTS.includes(p.name)) || inputs[0];
           pictures[target.name] = [plan.source];
         }
-        if (plan.shape) setOption(options, controls, 'aspect_ratio', plan.shape);
-        if (plan.seconds) setOption(options, controls, 'duration', plan.seconds);
+        // The settings the message named win over the defaults; the shape goes into the model's own shape setting.
+        Object.assign(options, plan.settings || {});
+        if (plan.shape && plan.action !== 'make_longer') applyShape(options, controls, plan.shape);
         entry = await jobs.generate({ kind: pick.kind, service: pick.service, model: pick.model, prompt, options, pictures, op });
       }
       jobs.mark(entry.id, { chat: msg.id });

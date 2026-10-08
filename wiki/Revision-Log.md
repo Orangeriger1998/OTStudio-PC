@@ -1,5 +1,13 @@
 # Revision Log
 
+## 0.5.1 (2026-10-08)
+
+- A shape typed in a chat message, such as 4:3, now reaches the model's shape setting. Before, it stayed in the prompt and the picture came out square.
+- Any setting named in a chat message goes into the request: the number of pictures, length, sound, resolution, safety, seed, steps, guidance, file type, style, what to keep out, and any other setting by its name on the model's card.
+- The plan lists every setting it will send, names the settings the model does not have, and says when a value stays at the default.
+- OpenRouter video plans show a price worked out from OpenRouter's own price per second.
+- Upscale in the chat takes "2x" and "faces"; Expand takes "safety on".
+
 ## 0.5.0 (2026-10-08)
 
 - The chat model can be a private model in Ollama on this PC or a model on OpenRouter, and you can switch between them at any time. A badge shows which: a crossed-out eye for private, a cloud for OpenRouter.
