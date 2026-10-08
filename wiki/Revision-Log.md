@@ -1,5 +1,13 @@
 # Revision Log
 
+## 0.3.0 (2026-10-08)
+
+- A LoRAs tab: your FLUX dev LoRAs with Use for pictures, Strength, Export, and Remove.
+- Import LoRA files from the Android app and the LoRA Trainer, or add a LoRA by its reference.
+- Train a LoRA on Replicate from the app, with photo checks, upright JPEG copies, progress, and Stop. The finished LoRA joins your list.
+- LoRAs trained into your private Replicate model run on their own version, because the public LoRA model cannot read private models.
+- A Saved LoRA chooser on the Pictures tab for FLUX dev with a LoRA.
+
 ## 0.2.0 (2026-10-08)
 
 - Edit: opens a picture with the editing model you used last, ready for a description of the change and more reference pictures.

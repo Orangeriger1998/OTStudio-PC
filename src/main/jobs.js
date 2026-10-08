@@ -13,6 +13,7 @@ const { sniff, NAME_RE, typeOf } = require('./media');
 const { NetError } = require('./netguard');
 const imaging = require('./imaging');
 const video = require('./video');
+const lora = require('../core/lora');
 
 const REPLICATE = { id: 'replicate', name: 'Replicate', keySlot: 'replicate', keyLabel: 'Replicate', builtin: true, special: true };
 const HISTORY_MAX = 2000;
@@ -97,6 +98,19 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
     return controls;
   }
 
+  /** The input list of one version of a Replicate model, such as a trained LoRA. */
+  async function versionSchema(owner, name, version, k) {
+    const id = `replicate:${owner}/${name}/${version}`;
+    const c = cache()[id];
+    if (c) return replicate.parseSchema(c.value, 'image', `${owner}/${name}`);
+    const res = await net.request(`${replicate.BASE}/models/${owner}/${name}/versions/${version}`, { headers: bearer(k), keyHeaders: ['Authorization'] });
+    const body = await readJson(res);
+    if (!res.ok) throw new JobError(res.status === 404 ? 'Replicate cannot find this trained LoRA. It may belong to another account, or the model was deleted.' : service.errorText({ result: {} }, body) || `Replicate answered with status ${res.status}.`);
+    if (body.id !== version || !body.openapi_schema) throw new JobError('Your trained LoRA has no readable input list.');
+    putCache(id, body.openapi_schema);
+    return replicate.parseSchema(body.openapi_schema, 'image', `${owner}/${name}`);
+  }
+
   /** The service's models: its fixed list, plus the provider's own list once loaded. */
   async function models(id, refresh) {
     const d = def(id);
@@ -165,7 +179,28 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
       entry.op = { type: 'longer', parent: parent.id, parentFile: parent.files[0] };
     }
     let request;
-    if (d.special) {
+    const own = d.special && req.model === lora.MODEL && typeof (req.options || {}).lora_weights === 'string' ? lora.OWN.exec(req.options.lora_weights) : null;
+    if (own) {
+      // A LoRA trained into the user's own private model: the public FLUX dev LoRA model cannot download it, so the
+      // trained model's own version runs instead. That version already carries the LoRA.
+      const [, owner, name, version] = own;
+      const controls = await versionSchema(owner, name, version, k);
+      const names = new Set(controls.map((c) => c.name));
+      const options = {};
+      for (const [n, v] of Object.entries(req.options || {})) {
+        if (n === 'lora_weights') continue;
+        if (names.has(n)) options[n] = v;
+        else if (n === 'guidance' && names.has('guidance_scale')) options.guidance_scale = v;
+      }
+      const links = {};
+      for (const [field, list] of Object.entries(req.pictures || {})) {
+        if (!controls.some((c) => c.picture && c.name === field)) continue;
+        links[field] = [];
+        for (const n of list) links[field].push(await uploadToReplicate(n, k));
+      }
+      const input = replicate.buildInput(controls, req.prompt, options, links);
+      request = { method: 'POST', url: `${replicate.BASE}/predictions`, body: JSON.stringify({ version, input }), headers: { ...bearer(k), 'Content-Type': 'application/json' }, keyHeaders: ['Authorization'] };
+    } else if (d.special) {
       const controls = await replicateSchema(req.model, kind, false);
       const links = {};
       for (const [field, names] of Object.entries(req.pictures || {})) {
@@ -464,7 +499,7 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
     return { status: res.status, answer: shorten(answer), paths };
   }
 
-  return { list: () => history, generate, expand, upscale, size, lastFrame, cancel, remove, retryDownload, tick, resume, addPicture, mediaPath, models, form, test, REPLICATE };
+  return { list: () => history, uploadBuffer, generate, expand, upscale, size, lastFrame, cancel, remove, retryDownload, tick, resume, addPicture, mediaPath, models, form, test, REPLICATE };
 }
 
 /** A copy of [v] with long strings cut, so a test answer with picture data stays readable. */

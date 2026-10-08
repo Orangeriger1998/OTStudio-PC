@@ -44,6 +44,8 @@ async function init() {
   document.getElementById('viewer').addEventListener('click', closeViewer);
   document.addEventListener('keydown', onKey);
   ot.onJob(onJob);
+  ot.onLoras((st) => { S.loras = st; if (ui.tab === 'loras') softRender(); });
+  document.getElementById('main').addEventListener('focusout', () => { if (ui.pendingRender) setTimeout(() => { if (!typing()) { ui.pendingRender = false; render(); } }, 0); });
   render();
   await Promise.all(['image', 'video'].map((k) => chooseService(k, ui.forms[k].service, ui.forms[k].model)));
   setInterval(tickTimes, 1000);
@@ -97,13 +99,18 @@ async function loadForm(kind, refresh) {
 
 function renderIf(kind) { if (ui.tab === kind) render(); }
 
+/** True while the user is typing in a field, when a redraw would take the cursor away. */
+function typing() { const a = document.activeElement; return !!a && ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName) && document.getElementById('main').contains(a); }
+/** Redraws now, or after the user leaves the field they are typing in. */
+function softRender() { if (typing()) ui.pendingRender = true; else render(); }
+
 // ---------- layout ----------
 
 function render() {
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === ui.tab));
   const main = document.getElementById('main');
   const scroll = { c: document.querySelector('.composer')?.scrollTop, g: document.querySelector('.gallery')?.scrollTop, p: document.querySelector('.page')?.scrollTop };
-  main.replaceChildren(ui.tab === 'settings' ? settingsPage() : studio(ui.tab));
+  main.replaceChildren(ui.tab === 'settings' ? settingsPage() : ui.tab === 'loras' ? lorasPage() : studio(ui.tab));
   if (document.querySelector('.composer') && scroll.c) document.querySelector('.composer').scrollTop = scroll.c;
   if (document.querySelector('.gallery') && scroll.g) document.querySelector('.gallery').scrollTop = scroll.g;
   if (document.querySelector('.page') && scroll.p) document.querySelector('.page').scrollTop = scroll.p;
@@ -148,6 +155,7 @@ function composer(kind) {
       out.push(h('label', { class: 'field' }, h('span', { class: 'name', text: 'Describe it' }),
         h('textarea', { id: `prompt-${kind}`, value: f.prompt, placeholder: kind === 'video' ? 'What happens in the video' : 'What the picture shows', oninput: (e) => { f.prompt = e.target.value; } })));
     }
+    if (f.service === 'replicate' && f.form.controls.some((c) => c.name === 'lora_weights')) out.push(loraChooser(f));
     for (const p of f.form.pictures) out.push(pictureInput(kind, p));
     const simple = S.settings.simpleView;
     const shown = f.form.controls.filter((c) => !simple || c.simple || c.required);
@@ -536,6 +544,165 @@ async function openUpscale({ source, scale, faceEnhance }) {
     errorBox,
     h('div', { class: 'row' }, large ? null : go, h('button', { class: 'btn', text: large ? 'Close' : 'Cancel', onclick: closeModal })));
   draw();
+}
+
+// ---------- LoRAs ----------
+
+const LORA_MODEL = 'black-forest-labs/flux-dev-lora';
+const lt = { name: '', trigger: '', triggerEdited: false, photos: [], rejected: [], steps: 1000, rank: 16, error: '', busy: false, adding: false, ref: { name: '', reference: '', trigger: '', scale: 1 } };
+
+function suggestTrigger(name) {
+  let letters = String(name || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 12);
+  if (!letters || !/^[A-Z]/.test(letters)) letters = `OT${letters}`;
+  return letters.length >= 4 ? letters : `${letters}LORA`;
+}
+
+function withTrigger(prompt, trigger) {
+  const p = String(prompt || '');
+  if (!trigger) return p;
+  const re = new RegExp(`(^|[^A-Za-z0-9_])${trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Za-z0-9_])`, 'i');
+  return re.test(p) ? p : `${trigger} ${p}`.trim();
+}
+
+/** Opens the Pictures form on FLUX dev with a LoRA, with the LoRA's trigger word in the prompt. */
+async function useLora(item) {
+  ui.tab = 'image';
+  const f = ui.forms.image;
+  render();
+  await chooseService('image', 'replicate', LORA_MODEL);
+  if (f.model !== LORA_MODEL) { f.model = LORA_MODEL; await loadForm('image', false); }
+  applyLora(f, item);
+  f.hint = `Using the LoRA "${item.name}".${item.trigger ? ` Keep its trigger word ${item.trigger} in the prompt.` : ''}`;
+  render();
+  const box = document.getElementById('prompt-image');
+  if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+}
+
+function applyLora(f, item) {
+  if (!item) { delete f.options.lora_weights; delete f.options.lora_scale; return; }
+  f.options.lora_weights = item.reference;
+  f.options.lora_scale = item.scale;
+  f.prompt = withTrigger(f.prompt, item.trigger);
+}
+
+/** The "Saved LoRA" chooser shown above the settings of a model that takes a LoRA. */
+function loraChooser(f) {
+  const lib = S.loras.library;
+  const current = lib.find((l) => l.reference === f.options.lora_weights);
+  return h('label', { class: 'field' }, h('span', { class: 'name', text: 'Saved LoRA' }),
+    h('select', { onchange: (e) => { applyLora(f, lib.find((l) => l.id === e.target.value)); render(); } },
+      h('option', { value: '', text: lib.length ? 'None' : 'None saved yet', selected: !current }),
+      lib.map((l) => h('option', { value: l.id, text: l.trigger ? `${l.name} (${l.trigger})` : l.name, selected: current && current.id === l.id }))),
+    h('span', { class: 'note', text: 'Add or train LoRAs on the LoRAs tab.' }));
+}
+
+function lorasPage() {
+  return h('div', { class: 'page' }, librarySection(), trainSection(), trainingsSection());
+}
+
+function librarySection() {
+  const lib = S.loras.library;
+  const rows = lib.map((l) => h('div', { class: 'item' },
+    h('div', { class: 'grow' }, h('strong', { text: l.name }), ' ', l.trigger ? h('span', { class: 'chip', text: l.trigger }) : null, h('br'), h('span', { class: 'tech', text: l.reference })),
+    h('label', { class: 'row' }, h('span', { class: 'note', text: 'Strength' }),
+      h('input', { type: 'number', class: 'w70', min: -1, max: 3, step: 0.05, value: String(l.scale), onchange: async (e) => { try { await ot.loraEdit(l.id, { scale: Number(e.target.value) }); } catch (x) { snack(x.message); } } })),
+    h('button', { class: 'btn small primary', text: 'Use for pictures', onclick: () => useLora(l) }),
+    h('button', { class: 'btn small', text: 'Export', onclick: async () => { try { const p = await ot.loraExport(l.id); if (p) snack(`Exported to ${p}`); } catch (x) { snack(x.message); } } }),
+    h('button', { class: 'btn small danger', text: 'Remove', onclick: async () => { if (window.confirm(`Remove "${l.name}" from your LoRAs? The trained model stays in your Replicate account.`)) await ot.loraRemove(l.id); } })));
+  const box = h('div', { class: 'box' },
+    h('div', { class: 'note', text: 'FLUX dev LoRAs teach the picture model a face, a person, or a style. Use one from here, or choose it under Saved LoRA on the Pictures tab when the model is FLUX dev with a LoRA.' }),
+    rows.length ? h('div', { class: 'list' }, rows) : h('div', { class: 'note', text: 'You have no LoRAs yet. Train one below, import a file from the phone app or the LoRA Trainer, or add one by its reference.' }),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', text: 'Import a LoRA file', onclick: async () => { try { const item = await ot.loraImport(); if (item) snack(`Added ${item.name}.`); } catch (x) { snack(x.message); } } }),
+      h('button', { class: 'btn', text: lt.adding ? 'Close' : 'Add by reference', onclick: () => { lt.adding = !lt.adding; render(); } })));
+  if (lt.adding) {
+    box.append(h('div', { class: 'step' },
+      h('div', { class: 'two' },
+        textField('Name', lt.ref.name, (v) => { lt.ref.name = v; }),
+        textField('Trigger word', lt.ref.trigger, (v) => { lt.ref.trigger = v.trim(); })),
+      textField('Reference', lt.ref.reference, (v) => { lt.ref.reference = v.trim(); }, 'owner/model, owner/model/version, or an https:// address of the weights.'),
+      textField('Strength', String(lt.ref.scale), (v) => { lt.ref.scale = Number(v); }, 'From -1 to 3. 1 is the usual strength.'),
+      h('div', {}, h('button', { class: 'btn primary', text: 'Add', onclick: async () => { try { await ot.loraAdd(lt.ref); lt.adding = false; lt.ref = { name: '', reference: '', trigger: '', scale: 1 }; render(); } catch (x) { snack(x.message); } } }))));
+  }
+  return h('section', {}, h('h2', { text: 'Your LoRAs' }), box);
+}
+
+function trainSection() {
+  const nameInput = h('input', { type: 'text', value: lt.name, placeholder: 'For example: Anna face', oninput: (e) => {
+    lt.name = e.target.value;
+    if (!lt.triggerEdited) { lt.trigger = suggestTrigger(lt.name); const t = document.getElementById('lora-trigger'); if (t) t.value = lt.trigger; }
+  } });
+  const photos = h('div', { class: 'pics' }, lt.photos.map((p, i) => h('div', { class: 'pic' }, h('img', { src: mediaUrl(p.name), alt: '' }),
+    h('button', { text: 'Remove', onclick: () => { lt.photos.splice(i, 1); render(); } }))));
+  return h('section', {}, h('h2', { text: 'Train a LoRA' }), h('div', { class: 'box' },
+    h('div', { class: 'two' },
+      h('label', { class: 'field' }, h('span', { class: 'name', text: 'Name' }), nameInput),
+      h('label', { class: 'field' }, h('span', { class: 'name', text: 'Trigger word' }),
+        h('input', { type: 'text', id: 'lora-trigger', value: lt.trigger, oninput: (e) => { lt.trigger = e.target.value.trim(); lt.triggerEdited = true; } }),
+        h('span', { class: 'note', text: 'A made-up word you put in prompts to call up the LoRA.' }))),
+    h('div', { class: 'field' }, h('span', { class: 'name', text: `Photos (${lt.photos.length} of 20)` }),
+      photos,
+      lt.photos.length < 20 ? h('div', {}, h('button', { class: 'btn small', text: lt.photos.length ? 'Add more photos' : 'Choose photos', onclick: pickTrainingPhotos })) : null,
+      h('span', { class: 'note', text: 'Choose 10 to 20 clear photos of the same face, person, or style, from different angles, in different light, and with different clothes and backgrounds. Each photo must be at least 512 pixels on its short side and at most 50 MB. JPG, PNG, and WebP work; save HEIC photos as JPEG first. OT Studio turns each photo upright and sends a JPEG copy; your originals stay untouched.' }),
+      lt.rejected.length ? h('div', { class: 'message', text: `Not added:\n${lt.rejected.map((r) => `${r.file} ${r.reason}`).join('\n')}` }) : null),
+    h('details', {}, h('summary', { text: 'More settings' }), h('div', { class: 'two' },
+      textField('Steps', String(lt.steps), (v) => { lt.steps = Number(v); }, '3 to 6000. 1000 suits most faces.'),
+      textField('Rank', String(lt.rank), (v) => { lt.rank = Number(v); }, '1 to 128. 16 suits most faces.'))),
+    h('div', { class: 'note', text: 'Training runs on Replicate with ostris/flux-dev-lora-trainer. 1,000 steps cost about $1.50 to $2 and take about 20 to 30 minutes. The LoRA is kept in a private model in your Replicate account, and OT Studio adds it to your LoRAs when it is ready.' }),
+    lt.error ? h('div', { class: 'message', text: lt.error }) : null,
+    h('div', {}, h('button', { class: 'btn primary', disabled: lt.busy, text: lt.busy ? 'Starting...' : 'Start training', onclick: startTraining }))));
+}
+
+async function pickTrainingPhotos() {
+  lt.error = '';
+  try {
+    const found = await ot.loraPickPhotos();
+    const ok = found.filter((p) => p.ok);
+    lt.rejected = found.filter((p) => !p.ok);
+    const all = [...lt.photos, ...ok];
+    if (all.length > 20) lt.error = 'Only 20 photos fit. The rest were left out.';
+    lt.photos = all.slice(0, 20);
+  } catch (x) { lt.error = x.message; }
+  render();
+}
+
+async function startTraining() {
+  lt.error = '';
+  if (!lt.trigger) lt.trigger = suggestTrigger(lt.name);
+  if (!window.confirm(`Start training "${lt.name}" on Replicate? This is billed to your Replicate account: about $1.50 to $2 for 1,000 steps.`)) return;
+  lt.busy = true;
+  render();
+  try {
+    const record = await ot.loraTrain({ name: lt.name, trigger: lt.trigger, photos: lt.photos.map((p) => p.name), steps: lt.steps, rank: lt.rank });
+    if (record.state === 'failed' || record.state === 'uncertain') lt.error = record.error;
+    else { lt.name = ''; lt.trigger = ''; lt.triggerEdited = false; lt.photos = []; lt.rejected = []; snack('Training started. It usually takes 20 to 30 minutes.'); }
+  } catch (x) { lt.error = x.message; }
+  lt.busy = false;
+  render();
+}
+
+const TRAIN_WORDS = { sending: 'Sending', starting: 'Starting', processing: 'Training', succeeded: 'Ready', failed: 'Failed', canceled: 'Stopped', uncertain: 'Outcome unknown' };
+
+function trainingsSection() {
+  const list = S.loras.trainings;
+  if (!list.length) return null;
+  return h('section', {}, h('h2', { text: 'Trainings' }), h('div', { class: 'box' }, h('div', { class: 'list' }, list.map((t) => {
+    const running = ['sending', 'starting', 'processing'].includes(t.state);
+    const pct = t.progress === null || t.progress === undefined ? null : Math.round(t.progress * 100);
+    const item = S.loras.library.find((l) => l.id === t.loraId);
+    const bar = h('div', { class: 'bar' }, h('div', { class: 'fill' }));
+    if (pct !== null) bar.firstChild.style.setProperty('width', `${pct}%`);
+    return h('div', { class: 'item' },
+      h('div', { class: 'grow' },
+        h('strong', { text: t.name }), ' ', h('span', { class: `state ${t.state === 'succeeded' ? 'done' : running ? 'running' : 'failed'}`, text: TRAIN_WORDS[t.state] || t.state }),
+        running ? h('span', { class: 'note', 'data-since': String(t.created), text: '' }) : null,
+        h('br'), h('span', { class: 'note', text: `${t.photos.length} photos · ${t.steps} steps · trigger ${t.trigger} · ${new Date(t.created).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` }),
+        running ? h('div', {}, bar, h('span', { class: 'note', text: pct === null ? 'Replicate is preparing the trainer. The first step can take a few minutes.' : `${pct}% of the steps done.` })) : null,
+        t.error ? h('div', { class: 'message', text: t.error }) : null),
+      running && t.trainingId ? h('button', { class: 'btn small', text: 'Stop', onclick: async () => { if (window.confirm('Stop this training? Replicate still bills the time it has run.')) { try { await ot.loraCancel(t.id); } catch (x) { snack(x.message); } } } }) : null,
+      item ? h('button', { class: 'btn small primary', text: 'Use for pictures', onclick: () => useLora(item) }) : null,
+      !running ? h('button', { class: 'btn small', text: 'Remove from list', onclick: async () => { try { await ot.loraForget(t.id); } catch (x) { snack(x.message); } } }) : null);
+  }))));
 }
 
 // ---------- viewer and messages ----------

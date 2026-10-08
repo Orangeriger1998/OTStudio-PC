@@ -8,6 +8,7 @@ const CHANNELS = [
   'state', 'key:set', 'key:clear', 'settings:set', 'models', 'replicate:add', 'replicate:forget', 'form', 'pictures:pick',
   'generate', 'expand', 'upscale', 'media:size', 'video:lastFrame', 'cancel', 'remove', 'download:retry', 'save', 'folder:open', 'folder:change',
   'snippet:parse', 'service:rebuild', 'service:test', 'service:save', 'service:remove', 'service:export', 'service:import',
+  'lora:add', 'lora:edit', 'lora:remove', 'lora:import', 'lora:export', 'lora:pickPhotos', 'lora:train', 'lora:cancel', 'lora:forget',
   'hosts:remove', 'link:open',
 ];
 
@@ -21,5 +22,6 @@ for (const channel of CHANNELS) {
   };
 }
 api.onJob = (callback) => ipcRenderer.on('job', (_event, entry) => callback(entry));
+api.onLoras = (callback) => ipcRenderer.on('loras', (_event, state) => callback(state));
 
 contextBridge.exposeInMainWorld('ot', api);

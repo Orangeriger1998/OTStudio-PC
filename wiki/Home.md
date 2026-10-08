@@ -5,6 +5,7 @@ OT Studio makes pictures and videos with your own API keys. This wiki covers the
 ## Pages
 
 - [Getting started](Getting-Started.md): keys, your first picture, and saving.
+- [LoRAs](LoRAs.md): use, import, and train LoRAs for faces and styles.
 - [Adding a service](Adding-a-Service.md): use any picture or video provider by pasting its example request.
 - [Design](Design.md): what each screen shows.
 - [Privacy and security](Privacy.md): what leaves your PC, and what never does.

@@ -10,6 +10,7 @@ const { createStore } = require('./store');
 const { createKeys, BUILTIN_SLOTS } = require('./keys');
 const { createNet } = require('./netguard');
 const { createJobs, REPLICATE } = require('./jobs');
+const { createLoras } = require('./loras');
 const { NAME_RE, typeOf } = require('./media');
 const { BUILTINS, BUILTIN_HOSTS } = require('../core/builtins');
 const service = require('../core/service');
@@ -28,7 +29,7 @@ protocol.registerSchemesAsPrivileged([
 if (!app.requestSingleInstanceLock()) app.quit();
 
 let win = null;
-let store, keys, jobs;
+let store, keys, jobs, loras;
 const builtins = BUILTINS.map((d) => service.validate(d));
 
 function settings() {
@@ -65,7 +66,7 @@ function keySlots() {
 
 function publicState() {
   return {
-    version: app.getVersion(), settings: settings(), services: services(), keys: keySlots(), history: jobs.list(),
+    version: app.getVersion(), settings: settings(), services: services(), keys: keySlots(), history: jobs.list(), loras: loras.state(),
     hosts: store.read('hosts', []), replicateModels: replicate.MODELS, editModels: [...replicate.EDIT_MODELS], saveDirs: { image: saveDir('image'), video: saveDir('video') },
   };
 }
@@ -195,6 +196,36 @@ function registerHandlers() {
     store.write('services', [...store.read('services', []).filter((s) => s.id !== d.id), d]);
     return services();
   });
+  handle('lora:add', (item) => loras.add(item || {}));
+  handle('lora:edit', (id, patch) => loras.edit(String(id), patch || {}));
+  handle('lora:remove', (id) => loras.remove(String(id)));
+  handle('lora:import', async () => {
+    const r = await dialog.showOpenDialog(win, { title: 'Import a LoRA', properties: ['openFile'], filters: [{ name: 'OT Studio LoRA', extensions: ['json'] }] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    if (fs.statSync(r.filePaths[0]).size > 16384) throw new Error('That file is too large to be a LoRA file.');
+    return loras.importText(fs.readFileSync(r.filePaths[0], 'utf8'));
+  });
+  handle('lora:export', async (id) => {
+    const { name, text } = loras.exportText(String(id));
+    const safe = name.replace(/[^A-Za-z0-9 _-]+/g, '').trim() || 'lora';
+    const r = await dialog.showSaveDialog(win, { title: 'Export the LoRA', defaultPath: `${safe}.otstudio-lora.json`, filters: [{ name: 'OT Studio LoRA', extensions: ['json'] }] });
+    if (r.canceled || !r.filePath) return null;
+    fs.writeFileSync(r.filePath, text);
+    return r.filePath;
+  });
+  handle('lora:pickPhotos', async () => {
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Choose training photos', properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Photos', extensions: ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'] }],
+    });
+    if (r.canceled) return [];
+    const out = [];
+    for (const p of r.filePaths.slice(0, 40)) out.push(await loras.addPhoto(p));
+    return out;
+  });
+  handle('lora:train', (req) => loras.train(req || {}));
+  handle('lora:cancel', (id) => loras.cancel(String(id)));
+  handle('lora:forget', (id) => loras.forget(String(id)));
   handle('hosts:remove', (host) => { store.write('hosts', store.read('hosts', []).filter((h) => h !== host)); return store.read('hosts', []); });
   handle('link:open', (which) => { if (which === 'repo') shell.openExternal(REPO); });
 }
@@ -260,6 +291,8 @@ app.whenReady().then(() => {
   const net = createNet(approvedHosts);
   jobs = createJobs({ store, keys, net, mediaDir: path.join(data, 'media'), services, approveHost, approvedHosts, notify: (entry) => { if (win) win.webContents.send('job', entry); } });
   jobs.resume();
+  loras = createLoras({ store, keys, net, mediaDir: path.join(data, 'media'), upload: (...a) => jobs.uploadBuffer(...a), notify: (st) => { if (win) win.webContents.send('loras', st); } });
+  loras.resume();
 
   // The window never reaches the network itself, and it may not ask for the camera, location, or anything else.
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
@@ -272,7 +305,7 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   registerHandlers();
   createWindow();
-  setInterval(() => jobs.tick(), 1000);
+  setInterval(() => { jobs.tick(); loras.tick(); }, 1000);
 });
 
 app.on('web-contents-created', (_e, contents) => {

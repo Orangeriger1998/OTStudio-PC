@@ -1,6 +1,6 @@
 # Design
 
-OT Studio for Windows uses one window with three tabs on a black background, with orange for the selected tab and the main buttons.
+OT Studio for Windows uses one window with four tabs (Pictures, Videos, LoRAs, and Settings) on a black background, with orange for the selected tab and the main buttons.
 
 ## Pictures and Videos
 
@@ -20,6 +20,14 @@ The right panel lists jobs as cards, newest first. A card shows the result, its 
 - **Upscale the picture**: 2 or 4 times, the resulting size, and "Enhance faces". A picture that is already large gets an explanation and no Upscale button.
 
 When a video is being made longer, the Videos form shows a blue note above the prompt, with "Stop making it longer", and the button reads **Make the next part**.
+
+## LoRAs
+
+- **Your LoRAs**: each LoRA with its trigger word, its reference, a Strength box, **Use for pictures**, **Export**, and **Remove**. Below the list: **Import a LoRA file** and **Add by reference**.
+- **Train a LoRA**: the name, the trigger word (suggested from the name), the photos with a **Remove** button on each, the photo rules under the button, **More settings** (steps and rank), the price, and **Start training**.
+- **Trainings**: each training with its state, a progress bar, the time it has run, and **Stop**, **Use for pictures**, or **Remove from list**.
+
+On the Pictures tab, FLUX dev with a LoRA shows a **Saved LoRA** chooser above its settings.
 
 ## Settings
 

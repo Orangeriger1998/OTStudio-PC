@@ -112,3 +112,7 @@ input.w70 { width: 70px; }
 .shape { position: relative; width: 100%; max-height: 46vh; margin: 0 auto; background: repeating-linear-gradient(45deg, #1d1d1d 0 10px, #262626 10px 20px); border: 1px dashed var(--accent); border-radius: 6px; overflow: hidden; }
 .shape img { position: absolute; object-fit: fill; }
 .chip.plain { font-family: inherit; font-size: 13px; padding: 4px 12px; }
+.bar { height: 6px; background: #2a2a2a; border-radius: 3px; overflow: hidden; margin: 6px 0 2px; }
+.bar .fill { height: 100%; width: 0; background: var(--accent); transition: width .5s; }
+details > summary { cursor: pointer; color: var(--muted); }
+.tech { word-break: break-all; }
