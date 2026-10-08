@@ -1,0 +1,34 @@
+# OT Studio for Windows: working instructions
+
+OT Studio for Windows makes pictures and videos from the user's own API keys. It is the desktop companion of the Android app (Orangeriger1998/OTStudio) and keeps its own version numbers. It has no chat. The owner is OrangeTiger (GitHub account Orangeriger1998). Keep "Created by OrangeTiger" and the repository link in Settings > About. Do not add personal email addresses to the app, the repository, or the wiki.
+
+## Shape of the app
+
+- Electron. `src/main` is the main process: it does all network calls, file access, and key storage. `src/renderer` is the window: plain HTML, CSS, and JavaScript with no framework, sandboxed, with contextIsolation and a strict Content Security Policy. `src/main/preload.js` is the only bridge, and it exposes a fixed list of calls.
+- `src/core` holds logic with no Electron types, so `node --test` covers it: reading pasted examples (snippet.js), filling request templates (template.js), service definitions (service.js), the built-in services (builtins.js), and Replicate (replicate.js).
+- Data lives in JSON files under the app's data folder (`%APPDATA%\OT Studio`). Do not add native modules: the PC has no C++ build tools.
+
+## Rules that protect the user
+
+- Only the main process reaches the network, and only through `src/main/netguard.js`: https only, approved hosts only (the built-in list in builtins.js plus hosts the user allowed in a dialog that the main process shows). The window may not reach the network at all.
+- A pasted curl, Python, or Node example is read as text and never run. Service definitions are data. Never add a way to run code from a definition, an example, or a provider answer.
+- A key goes only to its own service's origin, only in the key header, never in a body or address, and never to a storage host. A redirect to another origin drops the key header.
+- Saved keys must survive every update. The key file name, its version 1 format, and the built-in slot names (replicate, spicyapi, openrouter) are pinned by `test/keys-contract.test.js`. Never edit that test to make a change pass, and never add a step that clears saved keys.
+- A paid request is sent once. Never add automatic retries. A request whose outcome is unknown stays "Outcome unknown" until the user decides. Task checks (free GET requests) may repeat.
+- SpicyAPI models are text-only (owner decision, 2026-10-05): never send a picture to SpicyAPI.
+- Prompts, provider answers, model lists, imported files, and pictures are untrusted input. The window sets them as text, never as HTML.
+- Do not request keys in chat, print or commit secrets, or run paid generation without the owner's approval for that action. Never put a key from a skill or another project into this repository.
+
+## Checks
+
+```
+npm test
+npm start
+npm run dist
+```
+
+`npm run dist` builds the NSIS installer in `dist/`. Raise `version` in package.json for each release, and attach the installer and its .sha256 to a GitHub release.
+
+## Documentation rules
+
+All user-facing text (in-app strings, README, docs, and the wiki) follows the long-form writing rules: no em dashes, no contractions, active voice, one claim per sentence, varied sentence construction, no filler openers, and no arbitrary three-item lists. While the repository is private, the wiki lives in the wiki folder with .md links. The wiki carries a Revision Log of high-level changes per version.

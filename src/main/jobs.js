@@ -1,0 +1,370 @@
+'use strict';
+// Runs picture and video jobs: sends the request, checks running tasks, downloads results into the media folder, and
+// keeps the history. A paid request is sent once. It is never retried on its own; if the outcome is unknown, the job says
+// so and the user decides. Task checks are free GET requests, so those continue until the task ends.
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const service = require('../core/service');
+const replicate = require('../core/replicate');
+const { get, stringPaths } = require('../core/jsonpath');
+const { sniff, NAME_RE, typeOf } = require('./media');
+const { NetError } = require('./netguard');
+
+const REPLICATE = { id: 'replicate', name: 'Replicate', keySlot: 'replicate', keyLabel: 'Replicate', builtin: true, special: true };
+const HISTORY_MAX = 2000;
+const PICTURE_MAX = 30 * 1024 * 1024;
+
+class JobError extends Error {}
+
+function createJobs({ store, keys, net, mediaDir, services, approveHost, approvedHosts, notify, now = () => Date.now() }) {
+  fs.mkdirSync(mediaDir, { recursive: true });
+  let history = store.read('history', []);
+  const busy = new Set();
+
+  const save = () => store.write('history', history.slice(0, HISTORY_MAX));
+  const find = (id) => history.find((e) => e.id === id);
+  function update(entry, changes) {
+    Object.assign(entry, changes);
+    save();
+    notify(entry);
+  }
+  function def(id) {
+    if (id === 'replicate') return REPLICATE;
+    const d = services().find((s) => s.id === id);
+    if (!d) throw new JobError('That service is not set up anymore.');
+    return d;
+  }
+  function key(d) {
+    const k = keys.get(d.keySlot);
+    if (!k) throw new JobError(`Add your ${d.keyLabel || d.name} key in Settings first.`);
+    return k;
+  }
+  const bearer = (k) => ({ Authorization: `Bearer ${k}` });
+
+  // ---- pictures the user chose ----
+
+  function mediaPath(name) {
+    if (!NAME_RE.test(String(name))) throw new JobError('That picture is not in the media folder.');
+    return path.join(mediaDir, name);
+  }
+
+  /** Copies a picture into the media folder and returns its file name. */
+  function addPicture(src) {
+    const stat = fs.statSync(src);
+    if (!stat.isFile() || stat.size > PICTURE_MAX) throw new JobError('Pictures must be files of up to 30 MB.');
+    const buf = fs.readFileSync(src);
+    const t = sniff(buf);
+    if (!t || t.kind !== 'image') throw new JobError('That file is not a PNG, JPEG, WebP, or GIF picture.');
+    const name = `in-${crypto.randomUUID()}.${t.ext}`;
+    fs.writeFileSync(path.join(mediaDir, name), buf);
+    return name;
+  }
+
+  function dataUri(name) {
+    const buf = fs.readFileSync(mediaPath(name));
+    const t = sniff(buf);
+    if (!t || t.kind !== 'image') throw new JobError('A chosen picture is not readable.');
+    return `data:${t.type};base64,${buf.toString('base64')}`;
+  }
+
+  // ---- model lists and inputs ----
+
+  function cache() { return store.read('modelcache', {}); }
+  function putCache(k, v) { const c = cache(); c[k] = { at: now(), value: v }; store.write('modelcache', c); }
+
+  async function readJson(res) { return net.json(res); }
+
+  async function replicateSchema(model, kind, refresh) {
+    if (!/^[\w.-]+\/[\w.-]+$/.test(model)) throw new JobError('The model must look like owner/name.');
+    const c = cache()[`replicate:${model}`];
+    if (c && !refresh) return replicate.parseSchema(c.value, kind, model);
+    const res = await net.request(`${replicate.BASE}/models/${model}`, { headers: bearer(key(REPLICATE)), keyHeaders: ['Authorization'] });
+    const body = await readJson(res);
+    if (!res.ok) throw new JobError(res.status === 404 ? 'Replicate has no model with that name, or it is private to another account.' : service.errorText({ result: {} }, body) || `Replicate answered with status ${res.status}.`);
+    if (`${body.owner}/${body.name}` !== model) throw new JobError('Replicate returned a different model.');
+    const doc = body.latest_version?.openapi_schema;
+    if (!doc) throw new JobError('This model has no readable input list.');
+    const controls = replicate.parseSchema(doc, kind, model);
+    putCache(`replicate:${model}`, doc);
+    return controls;
+  }
+
+  /** The service's models: its fixed list, plus the provider's own list once loaded. */
+  async function models(id, refresh) {
+    const d = def(id);
+    if (d.special) return null;
+    const fixed = (d.models?.fixed || []).map((m) => ({ id: m.id, name: m.name || m.id }));
+    const k = `models:${d.id}`;
+    let loaded = cache()[k]?.value || null;
+    if (refresh && d.models?.url) {
+      const headers = {};
+      const saved = keys.has(d.keySlot) ? keys.get(d.keySlot) : '';
+      if (saved && d.keyHeader) headers[d.keyHeader.name] = d.keyHeader.template.replace('{key}', saved);
+      const res = await net.request(d.models.url, { headers, keyHeaders: d.keyHeader ? [d.keyHeader.name] : [] });
+      const body = await readJson(res);
+      if (!res.ok) throw new JobError(service.errorText(d, body) || `The model list answered with status ${res.status}.`);
+      const items = get(body, d.models.list || '');
+      if (!Array.isArray(items)) throw new JobError('The model list has an unexpected shape.');
+      loaded = items.slice(0, 500).filter((m) => m && service.MODEL_RE.test(String(get(m, d.models.id || 'id')))).map((m) => {
+        const info = { ...m };
+        delete info.description;
+        return { id: String(get(m, d.models.id || 'id')), name: String(get(m, d.models.name || 'name') || get(m, d.models.id || 'id')).slice(0, 80), info };
+      });
+      putCache(k, loaded);
+    }
+    // The short list comes first (with the provider's details once loaded), then everything else the provider offers.
+    const all = loaded || [];
+    const out = [...fixed.map((f) => { const m = all.find((x) => x.id === f.id); return m ? { ...m, name: f.name } : f; }), ...all.filter((m) => !fixed.some((f) => f.id === m.id))];
+    return out.length ? out : [{ id: 'default', name: 'Default' }];
+  }
+
+  function modelInfo(d, model) {
+    const loaded = cache()[`models:${d.id}`]?.value || [];
+    return loaded.find((m) => m.id === model)?.info || null;
+  }
+
+  /** The form for one model: settings and picture inputs. */
+  async function form(id, model, kind, refresh) {
+    const d = def(id);
+    if (d.special) {
+      const controls = await replicateSchema(model, kind, refresh);
+      return { controls: controls.filter((c) => !c.picture && c.name !== 'prompt'), pictures: controls.filter((c) => c.picture), hasPrompt: controls.some((c) => c.name === 'prompt') };
+    }
+    const info = modelInfo(d, model);
+    return { controls: service.controls(d, model, info), pictures: service.pictureInputs(d, info), hasPrompt: true };
+  }
+
+  // ---- running jobs ----
+
+  function entryFor(kind, d, req) {
+    return {
+      id: crypto.randomUUID(), kind, service: d.id, serviceName: d.name, model: req.model, prompt: String(req.prompt || '').slice(0, 10000),
+      options: req.options || {}, pictures: req.pictures || {}, state: 'sending', files: [], created: now(),
+    };
+  }
+
+  async function generate(req) {
+    const kind = req.kind === 'video' ? 'video' : 'image';
+    const d = def(req.service);
+    if (!d.special && d.kind !== kind) throw new JobError('That service does not make this kind of media.');
+    const k = key(d);
+    for (const names of Object.values(req.pictures || {})) for (const n of names) mediaPath(n);
+    const entry = entryFor(kind, d, req);
+    let request;
+    if (d.special) {
+      const controls = await replicateSchema(req.model, kind, false);
+      const links = {};
+      for (const [field, names] of Object.entries(req.pictures || {})) {
+        if (!controls.some((c) => c.picture && c.name === field)) continue;
+        links[field] = [];
+        for (const n of names) links[field].push(await uploadToReplicate(n, k));
+      }
+      const input = replicate.buildInput(controls, req.prompt, req.options || {}, links);
+      const r = replicate.createRequest(req.model, input);
+      request = { ...r, headers: { ...bearer(k), 'Content-Type': 'application/json' }, keyHeaders: ['Authorization'] };
+    } else {
+      const pictures = {};
+      for (const [field, names] of Object.entries(req.pictures || {})) pictures[field] = names.map(dataUri);
+      const r = service.buildRequest(d, { prompt: req.prompt, model: req.model, options: req.options, pictures }, k, modelInfo(d, req.model));
+      request = { ...r, keyHeaders: d.keyHeader ? [d.keyHeader.name] : [] };
+      entry.options = r.sent.options;
+    }
+    history.unshift(entry);
+    save();
+    notify(entry);
+    send(entry, d, request);
+    return entry;
+  }
+
+  async function uploadToReplicate(name, k) {
+    const buf = fs.readFileSync(mediaPath(name));
+    const form = new FormData();
+    form.append('content', new Blob([buf], { type: typeOf(name) }), name);
+    const res = await net.request(`${replicate.BASE}/files`, { method: 'POST', headers: bearer(k), body: form, keyHeaders: ['Authorization'], timeout: 180000 });
+    const body = await readJson(res);
+    const url = body?.urls?.get;
+    if (!res.ok || typeof url !== 'string' || !url.startsWith('https://')) throw new JobError(service.errorText({ result: {} }, body) || 'Replicate did not accept the picture.');
+    return url;
+  }
+
+  async function send(entry, d, request) {
+    let res;
+    try {
+      res = await net.request(request.url, { method: request.method, headers: request.headers, body: request.body, keyHeaders: request.keyHeaders, timeout: d.special ? 60000 : 300000 });
+    } catch (e) {
+      const sent = !(e instanceof NetError) || e.sent;
+      update(entry, sent
+        ? { state: 'uncertain', error: `${e.message} The request may have reached ${d.name}. Check your account there before you try again.` }
+        : { state: 'failed', error: e.message });
+      return;
+    }
+    let body;
+    try { body = await readJson(res); } catch (e) { update(entry, { state: 'uncertain', error: `${e.message} Check your account at ${d.name} before you try again.` }); return; }
+    try {
+      const r = d.special ? (res.ok ? replicate.readPrediction(body) : { state: 'failed', error: service.errorText({ result: {} }, body) || `Replicate answered with status ${res.status}.` }) : service.readStart(d, res.status, body);
+      await apply(entry, d, r);
+    } catch (e) {
+      update(entry, { state: 'failed', error: e.message });
+    }
+  }
+
+  async function apply(entry, d, r) {
+    if (r.taskId) entry.taskId = r.taskId;
+    if (r.cost !== undefined) entry.cost = r.cost;
+    if (r.state === 'running') {
+      const wait = d.special ? 3 : d.result.interval;
+      update(entry, { state: 'running', status: r.status || '', nextPoll: now() + wait * 1000 });
+    } else if (r.state === 'done') {
+      update(entry, { state: 'downloading', remote: r.media.filter((m) => m.url).map((m) => m.url) });
+      await download(entry, d, r.media);
+    } else if (r.state === 'canceled') {
+      update(entry, { state: 'canceled', finished: now() });
+    } else {
+      update(entry, { state: 'failed', error: r.error || 'The job failed.', finished: now() });
+    }
+  }
+
+  async function download(entry, d, items) {
+    const files = [];
+    try {
+      for (const [i, m] of items.entries()) {
+        let buf;
+        if (m.data) buf = Buffer.from(m.data, 'base64');
+        else {
+          const u = new URL(m.url);
+          const sameOrigin = !d.special && u.origin === new URL(d.request.url).origin;
+          const replicateApi = d.special && u.origin === new URL(replicate.BASE).origin;
+          const known = approvedHosts().concat(d.mediaHosts || []);
+          if (!require('../core/hosts').allowed(m.url, known) && !(await approveHost(u.hostname, `${d.name} put the finished ${entry.kind === 'video' ? 'video' : 'picture'} there.`))) {
+            throw new JobError(`The result is on ${u.hostname}, which you did not allow.`);
+          }
+          const headers = {};
+          let keyHeaders = [];
+          if (sameOrigin && d.keyHeader) { headers[d.keyHeader.name] = d.keyHeader.template.replace('{key}', key(d)); keyHeaders = [d.keyHeader.name]; }
+          if (replicateApi) { Object.assign(headers, bearer(key(d))); keyHeaders = ['Authorization']; }
+          const res = await net.request(m.url, { headers, keyHeaders, timeout: 600000 });
+          if (!res.ok) throw new JobError(`The download answered with status ${res.status}.`);
+          buf = await net.bytes(res, entry.kind === 'video' ? 2 * 1024 * 1024 * 1024 : 200 * 1024 * 1024);
+        }
+        const t = sniff(buf);
+        if (!t || t.kind !== entry.kind) throw new JobError(`The result is not a ${entry.kind === 'video' ? 'video' : 'picture'} OT Studio can show.`);
+        const name = `${entry.kind === 'video' ? 'vid' : 'img'}-${entry.id.slice(0, 8)}-${i}.${t.ext}`;
+        fs.writeFileSync(path.join(mediaDir, name), buf);
+        files.push(name);
+      }
+      update(entry, { state: 'done', files, error: undefined, finished: now() });
+    } catch (e) {
+      update(entry, { state: 'failed', files, error: `The result is ready but could not be downloaded. ${e.message}`, canRetryDownload: !!(entry.remote && entry.remote.length), finished: now() });
+    }
+  }
+
+  async function retryDownload(id) {
+    const entry = find(id);
+    if (!entry || !entry.canRetryDownload) throw new JobError('There is nothing to download again.');
+    const d = def(entry.service);
+    update(entry, { state: 'downloading', canRetryDownload: false });
+    await download(entry, d, entry.remote.map((url) => ({ url })));
+  }
+
+  async function poll(entry) {
+    if (busy.has(entry.id)) return;
+    busy.add(entry.id);
+    try {
+      const d = def(entry.service);
+      const k = key(d);
+      let r;
+      if (d.special) {
+        const res = await net.request(`${replicate.BASE}/predictions/${encodeURIComponent(entry.taskId)}`, { headers: bearer(k), keyHeaders: ['Authorization'] });
+        const body = await readJson(res);
+        r = res.ok ? replicate.readPrediction(body) : { state: 'unknown' };
+      } else {
+        const p = service.pollRequest(d, entry.taskId, k);
+        const res = await net.request(p.url, { headers: p.headers, keyHeaders: d.keyHeader ? [d.keyHeader.name] : [] });
+        r = service.readPoll(d, res.status, await readJson(res));
+      }
+      if (r.state === 'unknown') { update(entry, { nextPoll: now() + 30000, status: 'checking again soon' }); return; }
+      await apply(entry, d, r);
+    } catch (e) {
+      // A failed check costs nothing: try again later, and show why in the meantime.
+      update(entry, { nextPoll: now() + 30000, status: e.message });
+    } finally {
+      busy.delete(entry.id);
+    }
+  }
+
+  function tick() {
+    for (const e of history) if (e.state === 'running' && (e.nextPoll || 0) <= now()) poll(e);
+  }
+
+  async function cancel(id) {
+    const entry = find(id);
+    if (!entry || entry.state !== 'running') throw new JobError('This job is not running.');
+    const d = def(entry.service);
+    if (!d.special) throw new JobError(`${d.name} tasks cannot be stopped from OT Studio. The task finishes on its own.`);
+    const res = await net.request(`${replicate.BASE}/predictions/${encodeURIComponent(entry.taskId)}/cancel`, { method: 'POST', headers: bearer(key(d)), keyHeaders: ['Authorization'] });
+    const body = await readJson(res);
+    if (!res.ok) throw new JobError(service.errorText({ result: {} }, body) || 'Replicate did not stop the job.');
+    await apply(entry, d, replicate.readPrediction(body));
+  }
+
+  /** On start: a job that was being sent when OT Studio closed has an unknown outcome. */
+  function resume() {
+    let changed = false;
+    for (const e of history) {
+      if (e.state === 'sending') { e.state = 'uncertain'; e.error = 'OT Studio closed while sending this job. Check your account at the provider before you try again.'; changed = true; }
+      if (e.state === 'downloading') { e.state = 'failed'; e.error = 'OT Studio closed during the download.'; e.canRetryDownload = !!(e.remote && e.remote.length); changed = true; }
+      if (e.state === 'running') e.nextPoll = 0;
+    }
+    if (changed) save();
+  }
+
+  function inUse(name) {
+    return history.some((e) => e.files.includes(name) || Object.values(e.pictures || {}).some((l) => l.includes(name)));
+  }
+
+  /** Removes entries and every media file only they use. */
+  function remove(ids) {
+    const gone = history.filter((e) => ids.includes(e.id) && e.state !== 'running' && e.state !== 'sending' && e.state !== 'downloading');
+    history = history.filter((e) => !gone.includes(e));
+    save();
+    for (const e of gone) {
+      for (const name of [...e.files, ...Object.values(e.pictures || {}).flat()]) {
+        if (!inUse(name)) { try { fs.rmSync(mediaPath(name), { force: true }); } catch { /* a locked file stays; it is harmless */ } }
+      }
+    }
+    return gone.map((e) => e.id);
+  }
+
+  /** Sends a test request for a service that is being set up, and returns the answer so the user can map it. */
+  async function test(draft, input) {
+    const d = service.validate({ ...draft, result: { mode: 'sync', media: 'x' } });
+    const host = new URL(d.request.url).hostname;
+    if (!require('../core/hosts').allowed(d.request.url, approvedHosts()) && !(await approveHost(host, 'This test sends your prompt and the key you saved for this service there.'))) throw new JobError(`You did not allow ${host}.`);
+    const pictures = {};
+    for (const [field, names] of Object.entries(input.pictures || {})) pictures[field] = names.map(dataUri);
+    const r = service.buildRequest(d, { ...input, pictures }, keys.has(d.keySlot) ? keys.get(d.keySlot) : '', null);
+    let res;
+    try {
+      res = await net.request(r.url, { method: r.method, headers: r.headers, body: r.body, keyHeaders: d.keyHeader ? [d.keyHeader.name] : [], timeout: 300000 });
+    } catch (e) {
+      throw new JobError(e.message);
+    }
+    const answer = await readJson(res);
+    const paths = stringPaths(answer).map((p) => ({ path: p.path, sample: p.sample, looks: /^https:\/\//.test(p.sample) ? 'link' : p.sample.length >= 80 && /^[A-Za-z0-9+/=]+$/.test(p.sample) ? 'picture data' : '' }));
+    return { status: res.status, answer: shorten(answer), paths };
+  }
+
+  return { list: () => history, generate, cancel, remove, retryDownload, tick, resume, addPicture, mediaPath, models, form, test, REPLICATE };
+}
+
+/** A copy of [v] with long strings cut, so a test answer with picture data stays readable. */
+function shorten(v) {
+  if (typeof v === 'string') return v.length > 200 ? `${v.slice(0, 120)}... (${v.length} characters)` : v;
+  if (Array.isArray(v)) return v.slice(0, 20).map(shorten);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).slice(0, 60).map(([k, x]) => [k, shorten(x)]));
+  return v;
+}
+
+module.exports = { createJobs, JobError, REPLICATE, shorten };

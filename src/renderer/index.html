@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' otmedia: data:; media-src otmedia:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OT Studio</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><img src="tiger.jpg" alt=""><span>OT Studio</span></div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="image" class="tab">Pictures</button>
+      <button role="tab" data-tab="video" class="tab">Videos</button>
+      <button role="tab" data-tab="settings" class="tab">Settings</button>
+    </nav>
+  </header>
+  <main id="main"></main>
+  <div id="snack" class="snack" hidden></div>
+  <div id="viewer" class="viewer" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
