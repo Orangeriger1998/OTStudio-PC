@@ -21,7 +21,7 @@ const SHAPE_WORDS = { '16:9': 'wide (16:9)', '9:16': 'tall (9:16)', '1:1': 'squa
 
 class ChatError extends Error {}
 
-function createChat({ store, jobs, ollama, settings, services, trash, notify, now = () => Date.now() }) {
+function createChat({ store, jobs, llm, settings, services, trash, notify, now = () => Date.now() }) {
   let messages = store.read('chat', []);
   const save = () => { store.write('chat', messages.slice(-500)); notify(messages); };
   const add = (m) => { const msg = { id: crypto.randomUUID(), at: now(), ...m }; messages.push(msg); save(); return msg; };
@@ -52,10 +52,12 @@ function createChat({ store, jobs, ollama, settings, services, trash, notify, no
   async function choose(plan) {
     const s = settings();
     const valid = (pick, kind) => pick && pick.model && (pick.service === 'replicate' || services().some((d) => d.id === pick.service && d.kind === kind));
+    const picks = s.chatPicks || {};
     let pick;
-    if (plan.action === 'make_picture') pick = valid(s.last.image, 'image') ? s.last.image : { service: 'replicate', model: 'black-forest-labs/flux-dev' };
-    else if (plan.action === 'edit') pick = { service: 'replicate', model: s.editModel || 'black-forest-labs/flux-kontext-dev' };
-    else if (plan.action === 'make_video') pick = valid(s.last.video, 'video') ? s.last.video : plan.source ? PICTURE_TO_VIDEO : WORDS_TO_VIDEO;
+    // The models chosen in the Chat tab come first; then the ones last used on the tabs; then plain defaults.
+    if (plan.action === 'make_picture') pick = valid(picks.image, 'image') ? picks.image : valid(s.last.image, 'image') ? s.last.image : { service: 'replicate', model: 'black-forest-labs/flux-dev' };
+    else if (plan.action === 'edit') pick = { service: 'replicate', model: picks.edit || s.editModel || 'black-forest-labs/flux-kontext-dev' };
+    else if (plan.action === 'make_video') pick = valid(picks.video, 'video') ? picks.video : valid(s.last.video, 'video') ? s.last.video : plan.source ? PICTURE_TO_VIDEO : WORDS_TO_VIDEO;
     else if (plan.action === 'make_longer') {
       const parent = jobs.list().find((e) => e.id === plan.parent);
       pick = parent ? { service: parent.service, model: parent.model } : PICTURE_TO_VIDEO;
@@ -98,16 +100,16 @@ function createChat({ store, jobs, ollama, settings, services, trash, notify, no
     if (!words && !attached.length) throw new ChatError('Write a message first.');
     const model = settings().chatModel;
     add({ role: 'user', text: words, attachments: attached });
-    if (!model) return add({ role: 'assistant', text: 'Choose your chat model in Settings, under Chat, first.' });
+    if (!model) return add({ role: 'assistant', text: 'Choose a chat model at the top of the Chat tab first.' });
     const ctx = context(attached);
     let raw;
-    try { raw = await ollama.plan(model, stateLine(ctx), words || 'Use the attached photo.'); }
+    try { raw = await llm.plan(model, stateLine(ctx), words || 'Use the attached photo.'); }
     catch (e) { return add({ role: 'assistant', text: e.message, error: true }); }
     const plan = chatplan.resolve(raw, words, ctx);
     if (plan.error) return add({ role: 'assistant', text: plan.error });
     if (plan.action === 'answer') {
       const turns = messages.filter((m) => m.text).slice(-8).map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text }));
-      try { return add({ role: 'assistant', text: (await ollama.reply(model, turns)) || 'I am not sure. Ask me for a picture or a video.' }); }
+      try { return add({ role: 'assistant', text: (await llm.reply(model, turns)) || 'I am not sure. Ask me for a picture or a video.' }); }
       catch (e) { return add({ role: 'assistant', text: e.message, error: true }); }
     }
     let pick = null;

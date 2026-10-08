@@ -714,11 +714,19 @@ const chatUi = { text: '', attach: [], busy: false, models: null, modelError: ''
 
 function chatPage() {
   const s = S.settings;
-  const header = h('div', { class: 'chat-head' },
-    h('h2', { class: 'grow', text: 'Chat' }),
-    h('label', { class: 'row' }, h('span', { class: 'note', text: 'Chat model' }), chatModelSelect()),
-    h('button', { class: 'btn small', text: 'Clear chat', onclick: () => clearChat(false) }),
-    h('button', { class: 'btn small danger', text: 'Clear chat and delete its pictures', onclick: () => clearChat(true) }));
+  const choice = currentChatChoice();
+  const side = h('aside', { class: 'composer' },
+    h('label', { class: 'field' }, h('span', { class: 'name', text: 'Chat model' }), chatModelSelect(),
+      choice ? h('div', {}, privacyBadge(choice.startsWith('ollama:'))) : null,
+      h('span', { class: 'note', text: choice && !choice.startsWith('ollama:') ? 'Your messages go to OpenRouter. Your pictures do not.' : 'Private models run in Ollama on this PC. Your messages stay on your computer.' })),
+    h('div', { class: 'field' }, h('span', { class: 'name', text: 'Models the chat uses' }), chatPicksFields(),
+      h('span', { class: 'note', text: 'Each plan names its model and price before you click Go.' })),
+    h('div', { class: 'field' }, h('span', { class: 'name', text: 'Clear' }),
+      h('button', { class: 'btn', text: 'Clear chat', onclick: () => clearChat(false) }),
+      h('span', { class: 'note', text: 'Removes the conversation. Pictures and videos stay on their tabs and in your folders.' }),
+      h('button', { class: 'btn danger', text: 'Clear chat and delete its pictures', onclick: () => clearChat(true) }),
+      h('span', { class: 'note', text: 'Also removes the chat\'s results, and moves their saved copies to the Recycle Bin.' })),
+    h('div', { class: 'note', text: s.autoSave ? 'Finished pictures and videos are saved to your folders automatically (Settings, Save folders).' : 'Automatic saving is off. Right-click a result to save it.' }));
   const list = h('div', { class: 'chat-list', id: 'chat-list' }, chatMessages());
   const input = h('textarea', { id: 'chat-input', class: 'chat-input', rows: 2, value: chatUi.text, placeholder: 'Ask for a picture or a video, or describe a change. Enter sends; Shift+Enter starts a new line.',
     oninput: (e) => { chatUi.text = e.target.value; }, onkeydown: chatKey });
@@ -728,28 +736,111 @@ function chatPage() {
       h('button', { class: 'btn', text: 'Photo', title: 'Attach photos', onclick: attachChatPhotos }),
       h('div', { class: 'grow' }, input),
       h('button', { class: 'btn primary', id: 'chat-send', text: 'Send', disabled: chatUi.busy, onclick: sendChat })),
-    h('div', { class: 'note', text: `${s.autoSave ? 'Finished pictures and videos are saved to your folders automatically. ' : ''}Nothing is billed until you click Go.` }));
-  const page = h('div', { class: 'chat' }, header, s.chatModel ? null : h('div', { class: 'message info', text: 'Choose your chat model above. It runs in Ollama on this PC; no chat text leaves your computer.' }), list, composer);
+    h('div', { class: 'note', text: 'Nothing is billed until you click Go.' }));
+  const notice = !choice
+    ? h('div', { class: 'message info', text: 'Choose a chat model on the left. Models marked private run in Ollama on this PC, and your messages stay on your computer. OpenRouter models run online with your OpenRouter key.' })
+    : null;
+  const main = h('section', { class: 'chat' }, notice, list, composer);
   setTimeout(() => { const l = document.getElementById('chat-list'); if (l) l.scrollTop = l.scrollHeight; }, 0);
   if (!chatUi.models && !chatUi.loadingModels) loadChatModels();
-  return page;
+  return h('div', { class: 'studio' }, side, main);
+}
+
+/** The saved chat model as "ollama:<name>" or "openrouter:<id>". Version 0.4.0 saved a bare Ollama name. */
+function currentChatChoice() {
+  const c = S.settings.chatModel || '';
+  return !c || c.startsWith('ollama:') || c.startsWith('openrouter:') ? c : `ollama:${c}`;
 }
 
 async function loadChatModels() {
   chatUi.loadingModels = true;
-  try { chatUi.models = await ot.chatModels(); chatUi.modelError = ''; }
-  catch (e) { chatUi.models = []; chatUi.modelError = e.message; }
+  try { chatUi.models = await ot.chatModels(); }
+  catch (e) { chatUi.models = { local: [], cloud: [], localError: e.message }; }
   chatUi.loadingModels = false;
   if (ui.tab === 'chat') softRender();
 }
 
+/** An icon drawn as SVG elements: an eye with a line through it (private) or a cloud (online). */
+function icon(kind) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'icon');
+  svg.setAttribute('aria-hidden', 'true');
+  const add = (tag, attrs) => { const el = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); svg.append(el); };
+  if (kind === 'private') {
+    add('path', { d: 'M2 12c2.6-4.2 6-6.3 10-6.3S19.4 7.8 22 12c-2.6 4.2-6 6.3-10 6.3S4.6 16.2 2 12z' });
+    add('circle', { cx: '12', cy: '12', r: '3' });
+    add('line', { x1: '4', y1: '20', x2: '20', y2: '4' });
+  } else {
+    add('path', { d: 'M7 18h10.5a4 4 0 0 0 .4-8A6 6 0 0 0 6.3 9.4 4.3 4.3 0 0 0 7 18z' });
+  }
+  return svg;
+}
+
+function privacyBadge(local) {
+  return local
+    ? h('span', { class: 'badge private', title: 'This model runs in Ollama on this PC. Your messages never leave your computer.' }, icon('private'), ' Private: runs on this PC')
+    : h('span', { class: 'badge online', title: 'This model runs on OpenRouter. Your messages and the descriptions of your latest picture and video go to OpenRouter. Your pictures do not.' }, icon('online'), ' OpenRouter: your messages go online');
+}
+
 function chatModelSelect() {
-  const models = chatUi.models || [];
-  const current = S.settings.chatModel;
-  if (!models.length) return h('span', { class: 'note', text: chatUi.modelError ? 'Ollama is not running' : chatUi.loadingModels ? 'Loading...' : 'No models in Ollama', title: chatUi.modelError });
-  return h('select', { onchange: async (e) => { S.settings = await ot.settingsSet({ chatModel: e.target.value }); render(); } },
-    current ? null : h('option', { value: '', text: 'Choose a model', selected: true }),
-    models.map((m) => h('option', { value: m, text: m, selected: m === current })));
+  const m = chatUi.models;
+  const current = currentChatChoice();
+  if (!m) return h('span', { class: 'note', text: 'Loading the chat models...' });
+  const opt = (x) => h('option', { value: x.id, text: x.local ? `${x.name} (private)` : x.name, selected: x.id === current });
+  const known = [...m.local, ...m.cloud].some((x) => x.id === current);
+  return h('select', { class: 'chat-model', title: 'The model that reads your messages', onchange: async (e) => { S.settings = await ot.settingsSet({ chatModel: e.target.value }); render(); } },
+    !current ? h('option', { value: '', text: 'Choose a chat model', selected: true }) : null,
+    current && !known ? h('option', { value: current, text: `${current.replace(/^\w+:/, '')} (not available now)`, selected: true }) : null,
+    h('optgroup', { label: m.localError ? 'On this PC: Ollama is not running' : 'On this PC: private' }, m.local.map(opt)),
+    h('optgroup', { label: m.hasOpenRouterKey ? 'OpenRouter: online' : 'OpenRouter: online (add your OpenRouter key in Settings)' }, m.cloud.map(opt)));
+}
+
+/** The picture, edit, and video models the chat uses, chosen right here. */
+function chatPicksFields() {
+  const s = S.settings;
+  const picks = s.chatPicks || {};
+  const imageNow = picks.image || (s.last && s.last.image && s.last.image.model ? s.last.image : { service: 'replicate', model: 'black-forest-labs/flux-dev' });
+  const videoNow = picks.video || (s.last && s.last.video && s.last.video.model ? s.last.video : { service: 'replicate', model: 'wan-video/wan-2.2-i2v-fast' });
+  const editNow = picks.edit || s.editModel || 'black-forest-labs/flux-kontext-dev';
+  const pairSelect = (kind, now) => {
+    const options = mediaChoices(kind);
+    const key = `${now.service}|${now.model}`;
+    if (!options.some((o) => o.value === key)) options.unshift({ value: key, text: `${now.model} (${serviceLabel(now.service)})` });
+    return h('select', { onchange: async (e) => { const [service, ...rest] = e.target.value.split('|'); S.settings = await ot.settingsSet({ chatPicks: { [kind]: { service, model: rest.join('|') } } }); render(); } },
+      options.map((o) => h('option', { value: o.value, text: o.text, selected: o.value === key })));
+  };
+  const editSelect = h('select', { onchange: async (e) => { S.settings = await ot.settingsSet({ chatPicks: { edit: e.target.value } }); render(); } },
+    S.editModels.map((id) => h('option', { value: id, text: EDIT_NAMES[id] || replicateName(id), selected: id === editNow })));
+  return h('div', { class: 'chat-picks' },
+    h('label', { class: 'field' }, h('span', { class: 'note', text: 'Pictures with' }), pairSelect('image', imageNow)),
+    h('label', { class: 'field' }, h('span', { class: 'note', text: 'Edits with' }), editSelect),
+    h('label', { class: 'field' }, h('span', { class: 'note', text: 'Videos with' }), pairSelect('video', videoNow)));
+}
+
+const EDIT_NAMES = {
+  'black-forest-labs/flux-kontext-dev': 'FLUX Kontext dev', 'qwen/qwen-image-edit-plus': 'Qwen Image Edit Plus (several pictures)',
+  'qwen/qwen-image-edit': 'Qwen Image Edit', 'qwen/qwen-image-edit-2511': 'Qwen Image Edit 2511', 'black-forest-labs/flux-2-dev': 'FLUX.2 dev (several pictures)',
+  'black-forest-labs/flux-2-klein-9b': 'FLUX.2 klein 9B (several pictures)', 'black-forest-labs/flux-2-klein-4b': 'FLUX.2 klein 4B (several pictures)',
+  'bytedance/seedream-4.5': 'Seedream 4.5 (up to 14 pictures)', 'prunaai/p-image-edit': 'P-Image Edit (several pictures)',
+};
+
+function serviceLabel(id) { return id === 'replicate' ? 'Replicate' : (S.services.find((d) => d.id === id) || { name: id }).name; }
+function replicateName(id) {
+  for (const kind of ['image', 'video']) { const m = S.replicateModels[kind].find(([x]) => x === id); if (m) return m[1]; }
+  return id;
+}
+
+/** Every model the chat can use for one kind of media: Replicate's list, then each service's own short list. */
+function mediaChoices(kind) {
+  const out = [];
+  const replicateIds = [...S.replicateModels[kind].map(([id]) => id), ...(S.settings.replicateModels[kind] || [])];
+  for (const id of replicateIds) out.push({ value: `replicate|${id}`, text: `${replicateName(id)} (Replicate)` });
+  for (const d of S.services.filter((x) => x.kind === kind)) {
+    for (const m of (d.models && d.models.fixed) || []) out.push({ value: `${d.id}|${m.id}`, text: `${m.name || m.id} (${d.name})` });
+  }
+  return out;
 }
 
 function chatAttachments() {
@@ -1076,8 +1167,19 @@ function foldersSection() {
 }
 
 function chatSection() {
+  const added = S.settings.chatCloudModels || [];
+  const input = h('input', { type: 'text', class: 'grow', placeholder: 'Another OpenRouter model id, such as mistralai/mistral-large-4-0' });
   return h('section', {}, h('h2', { text: 'Chat' }), h('div', { class: 'box' },
-    h('div', { class: 'note', text: 'The Chat tab uses a model in Ollama on this PC. Your chat text stays on this computer; only the pictures and videos you start with Go reach a service.' }),
+    h('div', { class: 'row' }, privacyBadge(true), h('span', { class: 'note', text: 'Models in Ollama on this PC are private: your messages stay on your computer.' })),
+    h('div', { class: 'row' }, privacyBadge(false), h('span', { class: 'note', text: 'OpenRouter models run online with your OpenRouter key. Your messages and the descriptions of your latest picture and video go to OpenRouter; your pictures do not. Each message costs a small fraction of a cent.' })),
+    h('div', { class: 'note', text: 'Choose and switch the chat model at the top of the Chat tab. Only the pictures and videos you start with Go reach a picture or video service.' }),
+    h('div', { class: 'field' }, h('span', { class: 'name', text: 'More OpenRouter chat models' }),
+      added.length ? h('div', { class: 'list' }, added.map((m) => h('div', { class: 'item' }, h('span', { class: 'grow', text: m }),
+        h('button', { class: 'btn small danger', text: 'Remove', onclick: async () => { await ot.chatRemoveCloud(m); S = await ot.state(); chatUi.models = null; render(); } })))) : null,
+      h('div', { class: 'row' }, input, h('button', { class: 'btn small', text: 'Add', onclick: async () => {
+        try { await ot.chatAddCloud(input.value); S = await ot.state(); chatUi.models = null; snack('Added to the chat model list.'); render(); } catch (x) { snack(x.message); }
+      } })),
+      h('span', { class: 'note', text: 'The model must support structured outputs on OpenRouter. OT Studio checks before it adds one.' })),
     h('label', { class: 'row' }, h('span', { text: 'Ollama port' }),
       h('input', { type: 'number', class: 'w90', min: 1024, max: 65535, value: String(S.settings.ollamaPort), onchange: async (e) => { try { S.settings = await ot.settingsSet({ ollamaPort: Number(e.target.value) }); chatUi.models = null; snack('Saved.'); } catch (x) { snack(x.message); } } }),
       h('span', { class: 'note', text: 'Ollama uses 11434 unless you changed it.' }))));

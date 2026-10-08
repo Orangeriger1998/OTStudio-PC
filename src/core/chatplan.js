@@ -17,6 +17,7 @@ const SCHEMA = {
     reply: { type: 'string' },
   },
   required: ['action', 'target', 'shape', 'seconds', 'prompt', 'reply'],
+  additionalProperties: false,
 };
 
 const SYSTEM = `You operate a picture and video app. Read the user's request and choose ONE action:

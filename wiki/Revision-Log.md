@@ -1,5 +1,11 @@
 # Revision Log
 
+## 0.5.0 (2026-10-08)
+
+- The chat model can be a private model in Ollama on this PC or a model on OpenRouter, and you can switch between them at any time. A badge shows which: a crossed-out eye for private, a cloud for OpenRouter.
+- Settings, under Chat, adds more OpenRouter chat models; OT Studio checks that each one can answer in a fixed format.
+- The Chat tab now has a left panel, like Pictures and Videos, with the chat model, the picture, edit, and video models the chat uses, and the Clear buttons.
+
 ## 0.4.0 (2026-10-08)
 
 - A Chat tab: ask for pictures, edits, new shapes, upscales, videos, and longer videos in plain words. A model in Ollama on your PC reads the messages, and your chat text stays on your computer.

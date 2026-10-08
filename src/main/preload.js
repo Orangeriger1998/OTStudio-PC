@@ -9,7 +9,7 @@ const CHANNELS = [
   'generate', 'expand', 'upscale', 'media:size', 'video:lastFrame', 'cancel', 'remove', 'download:retry', 'save', 'folder:open', 'folder:change',
   'snippet:parse', 'service:rebuild', 'service:test', 'service:save', 'service:remove', 'service:export', 'service:import',
   'lora:add', 'lora:edit', 'lora:remove', 'lora:import', 'lora:export', 'lora:pickPhotos', 'lora:train', 'lora:cancel', 'lora:forget',
-  'chat:send', 'chat:go', 'chat:cancel', 'chat:clear', 'chat:models', 'media:menu',
+  'chat:send', 'chat:go', 'chat:cancel', 'chat:clear', 'chat:models', 'chat:addCloud', 'chat:removeCloud', 'media:menu',
   'hosts:remove', 'link:open',
 ];
 

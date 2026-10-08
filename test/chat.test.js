@@ -56,7 +56,7 @@ function setup({ plan, reply = 'A LoRA teaches the model a face.' }) {
   const trashed = [];
   const chat = createChat({
     store: createStore(path.join(dir, 'data')), jobs, services: () => [],
-    ollama: { plan: async () => plan, reply: async () => reply },
+    llm: { plan: async () => plan, reply: async () => reply },
     settings: () => ({ chatModel: 'gemma4-e2b:latest', last: {}, editModel: 'black-forest-labs/flux-kontext-dev' }),
     trash: async (p) => { trashed.push(p); return true; }, notify: () => {},
   });

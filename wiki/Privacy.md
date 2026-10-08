@@ -30,7 +30,11 @@ Training sends JPEG copies of the photos you chose to Replicate, in a ZIP, and c
 
 ## Chat
 
-The chat model runs in Ollama on your PC. OT Studio talks to it at 127.0.0.1 on Ollama's port and nowhere else without https. Your chat messages never leave your computer. Only a job you start with Go reaches a service, exactly as it would from the Pictures or Videos tab.
+A private chat model runs in Ollama on your PC. OT Studio talks to it at 127.0.0.1 on Ollama's port, the only address it reaches without https, and your chat messages never leave your computer.
+
+An OpenRouter chat model runs online. Your messages and the descriptions of your latest picture and video go to OpenRouter with your OpenRouter key. Your pictures and photos do not. The badge next to the chat model always shows which kind you are using.
+
+Either way, only a job you start with Go reaches a picture or video service, exactly as it would from the Pictures or Videos tab.
 
 ## Work done on your PC
 

@@ -4,7 +4,7 @@ OT Studio for Windows uses one window with five tabs (Chat, Pictures, Videos, Lo
 
 ## Chat
 
-The top row holds the chat model chooser, **Clear chat**, and **Clear chat and delete its pictures**. Your messages sit on the right in brown bubbles, with any attached photos. OT Studio's messages sit on the left. A plan shows the picture it will use, a bold line saying what will happen, the prompt, the price, and **Go** and **Cancel**. After Go, the same bubble shows progress and then the picture or video. Right-click a result for Save as, Show in folder, and Copy picture. The message box at the bottom has a **Photo** button and **Send**. The chat opens first when a chat model is chosen.
+The left panel holds **Chat model** (private Ollama models first, then OpenRouter models) with its badge: green with a crossed-out eye for private, blue with a cloud for OpenRouter. Below it, **Models the chat uses** has Pictures with, Edits with, and Videos with. **Clear chat** and **Clear chat and delete its pictures** come last, each with a line saying what it does. The conversation fills the right side. Your messages sit on the right in brown bubbles, with any attached photos. OT Studio's messages sit on the left. A plan shows the picture it will use, a bold line saying what will happen, the prompt, the price, and **Go** and **Cancel**. After Go, the same bubble shows progress and then the picture or video. Right-click a result for Save as, Show in folder, and Copy picture. The message box at the bottom has a **Photo** button and **Send**. The chat opens first when a chat model is chosen.
 
 ## Pictures and Videos
 
@@ -38,7 +38,7 @@ On the Pictures tab, FLUX dev with a LoRA shows a **Saved LoRA** chooser above i
 - **API keys**: one row per key, with Save and Remove.
 - **Services**: the built-in services and the ones you added, with Export, Edit, and Remove, plus **Add a service** and **Import a service**.
 - **Save folders** for pictures and videos, with the switch for saving every result automatically.
-- **Chat**: the Ollama port.
+- **Chat**: what private and OpenRouter chat models mean, more OpenRouter chat models, and the Ollama port.
 - **Allowed addresses**: hosts you allowed, with Remove.
 - **View**: the simple view switch.
 - **About**: the version, the creator, the license, and the project page.

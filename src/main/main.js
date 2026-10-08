@@ -13,6 +13,7 @@ const { createJobs, REPLICATE } = require('./jobs');
 const { createLoras } = require('./loras');
 const { createOllama } = require('./ollama');
 const { createChat } = require('./chat');
+const { createLlm } = require('./llm');
 const { NAME_RE, typeOf } = require('./media');
 const { BUILTINS, BUILTIN_HOSTS } = require('../core/builtins');
 const service = require('../core/service');
@@ -31,11 +32,11 @@ protocol.registerSchemesAsPrivileged([
 if (!app.requestSingleInstanceLock()) app.quit();
 
 let win = null;
-let store, keys, jobs, loras, ollama, chat;
+let store, keys, jobs, loras, ollama, llm, chat;
 const builtins = BUILTINS.map((d) => service.validate(d));
 
 function settings() {
-  return { simpleView: true, last: {}, saveDirs: {}, replicateModels: { image: [], video: [] }, chatModel: '', ollamaPort: 11434, autoSave: true, ...store.read('settings', {}) };
+  return { simpleView: true, last: {}, saveDirs: {}, replicateModels: { image: [], video: [] }, chatModel: '', chatCloudModels: [], chatPicks: {}, ollamaPort: 11434, autoSave: true, ...store.read('settings', {}) };
 }
 function setSettings(patch) { store.write('settings', { ...settings(), ...patch }); }
 function userServices() { return store.read('services', []).flatMap((d) => { try { return [service.validate(d)]; } catch { return []; } }); }
@@ -91,7 +92,15 @@ function registerHandlers() {
     const out = {};
     if (typeof patch.simpleView === 'boolean') out.simpleView = patch.simpleView;
     if (typeof patch.editModel === 'string' && replicate.EDIT_MODELS.has(patch.editModel)) out.editModel = patch.editModel;
-    if (typeof patch.chatModel === 'string' && /^[\w.:/-]{0,120}$/.test(patch.chatModel)) out.chatModel = patch.chatModel;
+    if (typeof patch.chatModel === 'string' && /^[\w.:/-]{0,180}$/.test(patch.chatModel)) out.chatModel = patch.chatModel;
+    if (patch.chatPicks && typeof patch.chatPicks === 'object') {
+      const pickOk = (p, kind) => p && typeof p === 'object' && service.MODEL_RE.test(String(p.model || '')) && (p.service === 'replicate' || services().some((d) => d.id === p.service && d.kind === kind));
+      const next = { ...(s.chatPicks || {}) };
+      if (pickOk(patch.chatPicks.image, 'image')) next.image = { service: patch.chatPicks.image.service, model: patch.chatPicks.image.model };
+      if (pickOk(patch.chatPicks.video, 'video')) next.video = { service: patch.chatPicks.video.service, model: patch.chatPicks.video.model };
+      if (typeof patch.chatPicks.edit === 'string' && replicate.EDIT_MODELS.has(patch.chatPicks.edit)) next.edit = patch.chatPicks.edit;
+      out.chatPicks = next;
+    }
     if (typeof patch.autoSave === 'boolean') out.autoSave = patch.autoSave;
     if (Number.isInteger(patch.ollamaPort) && patch.ollamaPort >= 1024 && patch.ollamaPort <= 65535) out.ollamaPort = patch.ollamaPort;
     if (patch.last && typeof patch.last === 'object') {
@@ -161,7 +170,14 @@ function registerHandlers() {
   handle('chat:go', (id) => chat.go(String(id)));
   handle('chat:cancel', (id) => chat.cancel(String(id)));
   handle('chat:clear', (deleteMedia) => chat.clear(deleteMedia === true));
-  handle('chat:models', () => ollama.models());
+  handle('chat:models', () => llm.models());
+  handle('chat:addCloud', async (model) => {
+    const m = await llm.checkCloud(model);
+    const list = settings().chatCloudModels || [];
+    if (!list.includes(m)) setSettings({ chatCloudModels: [...list, m] });
+    return m;
+  });
+  handle('chat:removeCloud', (model) => { setSettings({ chatCloudModels: (settings().chatCloudModels || []).filter((m) => m !== model) }); });
   handle('folder:open', async (kind) => {
     const dir = saveDir(kind === 'video' ? 'video' : 'image');
     fs.mkdirSync(dir, { recursive: true });
@@ -340,7 +356,8 @@ app.whenReady().then(() => {
   loras = createLoras({ store, keys, net, mediaDir: path.join(data, 'media'), upload: (...a) => jobs.uploadBuffer(...a), notify: (st) => { if (win) win.webContents.send('loras', st); } });
   loras.resume();
   ollama = createOllama({ net, port: () => settings().ollamaPort });
-  chat = createChat({ store, jobs, ollama, settings, services, trash: trashSaved, notify: (msgs) => { if (win) win.webContents.send('chat', msgs); } });
+  llm = createLlm({ ollama, net, keys, settings });
+  chat = createChat({ store, jobs, llm, settings, services, trash: trashSaved, notify: (msgs) => { if (win) win.webContents.send('chat', msgs); } });
 
   // The window never reaches the network itself, and it may not ask for the camera, location, or anything else.
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
