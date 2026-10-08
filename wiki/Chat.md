@@ -9,6 +9,14 @@ The left panel of the Chat tab holds everything about the chat. **Chat model** i
 - **Private models** run in Ollama on this PC. A green badge with a crossed-out eye reads "Private: runs on this PC". Your messages never leave your computer. Gemma 4 E2B works well and needs about 3.4 GB. Install Ollama, pull a model, and it appears in the list.
 - **OpenRouter models** run online with your OpenRouter key. A blue badge with a cloud reads "OpenRouter: your messages go online". Your messages and the descriptions of your latest picture and video go to OpenRouter; your pictures do not. Each message costs a small fraction of a cent. The list offers a few inexpensive models, and **Settings**, under **Chat**, adds any other OpenRouter model that can answer in a fixed format.
 
+OT Studio remembers the chat model you chose, including whether it is private or on OpenRouter, and opens the Chat tab with it the next time. The badge always shows the current kind.
+
+## When a chat model is not available
+
+- If Ollama is not running, the private group in the list reads "On this PC: Ollama is not running", and a message gets a plain answer asking you to start Ollama. Start Ollama, then send the message again. OT Studio never switches to an OpenRouter model on its own.
+- If your OpenRouter key is missing, the OpenRouter group reads "OpenRouter: online (add your OpenRouter key in Settings)", and a message asks for the key.
+- If a model you chose earlier is gone, the list shows it as "not available now" until you choose another one.
+
 If Ollama runs on a port other than 11434, set the port in **Settings**, under **Chat**.
 
 ## Choose the picture and video models
