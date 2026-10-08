@@ -28,6 +28,10 @@ Results and the pictures you attach are kept in the app's data folder, %APPDATA%
 
 Training sends JPEG copies of the photos you chose to Replicate, in a ZIP, and creates a private model in your Replicate account. Your original photos stay on your PC, untouched. The copies stay in the app's media folder until you remove the training from the list.
 
+## Chat
+
+The chat model runs in Ollama on your PC. OT Studio talks to it at 127.0.0.1 on Ollama's port and nowhere else without https. Your chat messages never leave your computer. Only a job you start with Go reaches a service, exactly as it would from the Pictures or Videos tab.
+
 ## Work done on your PC
 
 Rebuilding an expanded picture at full size and joining the parts of a longer video happen on your PC, with the bundled sharp and ffmpeg. Those steps send nothing anywhere.

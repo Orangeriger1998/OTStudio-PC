@@ -2,7 +2,7 @@
 // OT Studio for Windows. The window shows the app; this process does everything else. Only this process reaches the
 // network, and only through the network guard: Replicate, SpicyAPI, OpenRouter, and hosts the user approved.
 
-const { app, BrowserWindow, ipcMain, dialog, protocol, safeStorage, session, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol, safeStorage, session, shell, Menu, clipboard, nativeImage } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { Readable } = require('stream');
@@ -11,6 +11,8 @@ const { createKeys, BUILTIN_SLOTS } = require('./keys');
 const { createNet } = require('./netguard');
 const { createJobs, REPLICATE } = require('./jobs');
 const { createLoras } = require('./loras');
+const { createOllama } = require('./ollama');
+const { createChat } = require('./chat');
 const { NAME_RE, typeOf } = require('./media');
 const { BUILTINS, BUILTIN_HOSTS } = require('../core/builtins');
 const service = require('../core/service');
@@ -29,11 +31,11 @@ protocol.registerSchemesAsPrivileged([
 if (!app.requestSingleInstanceLock()) app.quit();
 
 let win = null;
-let store, keys, jobs, loras;
+let store, keys, jobs, loras, ollama, chat;
 const builtins = BUILTINS.map((d) => service.validate(d));
 
 function settings() {
-  return { simpleView: true, last: {}, saveDirs: {}, replicateModels: { image: [], video: [] }, ...store.read('settings', {}) };
+  return { simpleView: true, last: {}, saveDirs: {}, replicateModels: { image: [], video: [] }, chatModel: '', ollamaPort: 11434, autoSave: true, ...store.read('settings', {}) };
 }
 function setSettings(patch) { store.write('settings', { ...settings(), ...patch }); }
 function userServices() { return store.read('services', []).flatMap((d) => { try { return [service.validate(d)]; } catch { return []; } }); }
@@ -66,7 +68,7 @@ function keySlots() {
 
 function publicState() {
   return {
-    version: app.getVersion(), settings: settings(), services: services(), keys: keySlots(), history: jobs.list(), loras: loras.state(),
+    version: app.getVersion(), settings: settings(), services: services(), keys: keySlots(), history: jobs.list(), loras: loras.state(), chat: chat.list(),
     hosts: store.read('hosts', []), replicateModels: replicate.MODELS, editModels: [...replicate.EDIT_MODELS], saveDirs: { image: saveDir('image'), video: saveDir('video') },
   };
 }
@@ -89,6 +91,9 @@ function registerHandlers() {
     const out = {};
     if (typeof patch.simpleView === 'boolean') out.simpleView = patch.simpleView;
     if (typeof patch.editModel === 'string' && replicate.EDIT_MODELS.has(patch.editModel)) out.editModel = patch.editModel;
+    if (typeof patch.chatModel === 'string' && /^[\w.:/-]{0,120}$/.test(patch.chatModel)) out.chatModel = patch.chatModel;
+    if (typeof patch.autoSave === 'boolean') out.autoSave = patch.autoSave;
+    if (Number.isInteger(patch.ollamaPort) && patch.ollamaPort >= 1024 && patch.ollamaPort <= 65535) out.ollamaPort = patch.ollamaPort;
     if (patch.last && typeof patch.last === 'object') {
       out.last = { ...s.last };
       for (const kind of ['image', 'video']) if (patch.last[kind]) out.last[kind] = { service: String(patch.last[kind].service || '').slice(0, 64), model: String(patch.last[kind].model || '').slice(0, 200) };
@@ -133,18 +138,30 @@ function registerHandlers() {
   handle('save', (id) => {
     const entry = jobs.list().find((e) => e.id === id);
     if (!entry || !entry.files.length) throw new Error('There is nothing to save.');
-    const dir = saveDir(entry.kind);
-    fs.mkdirSync(dir, { recursive: true });
-    const stamp = new Date(entry.created).toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
-    const saved = entry.files.map((name, i) => {
-      const ext = name.split('.').pop();
-      let target = path.join(dir, `OTStudio-${stamp}${entry.files.length > 1 ? `-${i + 1}` : ''}.${ext}`);
-      for (let n = 2; fs.existsSync(target); n++) target = path.join(dir, `OTStudio-${stamp}-${i + 1}-${n}.${ext}`);
-      fs.copyFileSync(jobs.mediaPath(name), target);
-      return target;
-    });
-    return { dir, files: saved };
+    const r = saveEntry(entry);
+    jobs.mark(entry.id, { saved: [...(entry.saved || []), ...r.files] });
+    return r;
   });
+  handle('media:menu', (id, name) => {
+    const e = jobs.list().find((x) => x.id === id);
+    if (!e || !e.files.includes(name)) throw new Error('That result is gone.');
+    const file = jobs.mediaPath(name);
+    const copy = (e.saved || []).find((p) => path.extname(p) === path.extname(name) && fs.existsSync(p));
+    const menu = Menu.buildFromTemplate([
+      { label: 'Save as...', click: async () => {
+        const r = await dialog.showSaveDialog(win, { title: 'Save a copy', defaultPath: path.join(saveDir(e.kind), copy ? path.basename(copy) : `OTStudio-${name}`) });
+        if (!r.canceled && r.filePath) fs.copyFileSync(file, r.filePath);
+      } },
+      { label: copy ? 'Show the saved copy in its folder' : 'Show in folder', click: () => shell.showItemInFolder(copy || file) },
+      ...(e.kind === 'image' ? [{ label: 'Copy picture', click: async () => clipboard.writeImage(nativeImage.createFromBuffer(await require('sharp')(file).png().toBuffer())) }] : []),
+    ]);
+    menu.popup({ window: win });
+  });
+  handle('chat:send', (text, attachments) => chat.send(text, attachments));
+  handle('chat:go', (id) => chat.go(String(id)));
+  handle('chat:cancel', (id) => chat.cancel(String(id)));
+  handle('chat:clear', (deleteMedia) => chat.clear(deleteMedia === true));
+  handle('chat:models', () => ollama.models());
   handle('folder:open', async (kind) => {
     const dir = saveDir(kind === 'video' ? 'video' : 'image');
     fs.mkdirSync(dir, { recursive: true });
@@ -230,6 +247,35 @@ function registerHandlers() {
   handle('link:open', (which) => { if (which === 'repo') shell.openExternal(REPO); });
 }
 
+/** Copies a job's results into the save folder for its kind. */
+function saveEntry(entry) {
+  const dir = saveDir(entry.kind);
+  fs.mkdirSync(dir, { recursive: true });
+  const stamp = new Date(entry.created).toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
+  const saved = entry.files.map((name, i) => {
+    const ext = name.split('.').pop();
+    let target = path.join(dir, `OTStudio-${stamp}${entry.files.length > 1 ? `-${i + 1}` : ''}.${ext}`);
+    for (let n = 2; fs.existsSync(target); n++) target = path.join(dir, `OTStudio-${stamp}-${i + 1}-${n}.${ext}`);
+    fs.copyFileSync(jobs.mediaPath(name), target);
+    return target;
+  });
+  return { dir, files: saved };
+}
+
+/** Saves each finished result once, when automatic saving is on. */
+function autoSave(entry) {
+  if (entry.state !== 'done' || !entry.files.length || entry.saved || !settings().autoSave) return;
+  try { jobs.mark(entry.id, { saved: saveEntry(entry).files }); } catch { /* the Save button still works */ }
+}
+
+/** Moves a copy OT Studio saved to the Recycle Bin, but only from inside the save folders. */
+async function trashSaved(p) {
+  const file = path.resolve(String(p));
+  const inside = ['image', 'video'].some((k) => file.startsWith(path.resolve(saveDir(k)) + path.sep));
+  if (!inside || !fs.existsSync(file)) return false;
+  try { await shell.trashItem(file); return true; } catch { return false; }
+}
+
 async function requireHost(d) {
   const url = new URL(d.request.url);
   if (approvedHosts().includes(url.hostname)) return;
@@ -288,11 +334,13 @@ app.whenReady().then(() => {
   const data = app.getPath('userData');
   store = createStore(path.join(data, 'data'));
   keys = createKeys(data, safeStorage);
-  const net = createNet(approvedHosts);
-  jobs = createJobs({ store, keys, net, mediaDir: path.join(data, 'media'), services, approveHost, approvedHosts, notify: (entry) => { if (win) win.webContents.send('job', entry); } });
+  const net = createNet(approvedHosts, undefined, () => [`http://127.0.0.1:${settings().ollamaPort}`]);
+  jobs = createJobs({ store, keys, net, mediaDir: path.join(data, 'media'), services, approveHost, approvedHosts, notify: (entry) => { if (win) win.webContents.send('job', entry); autoSave(entry); } });
   jobs.resume();
   loras = createLoras({ store, keys, net, mediaDir: path.join(data, 'media'), upload: (...a) => jobs.uploadBuffer(...a), notify: (st) => { if (win) win.webContents.send('loras', st); } });
   loras.resume();
+  ollama = createOllama({ net, port: () => settings().ollamaPort });
+  chat = createChat({ store, jobs, ollama, settings, services, trash: trashSaved, notify: (msgs) => { if (win) win.webContents.send('chat', msgs); } });
 
   // The window never reaches the network itself, and it may not ask for the camera, location, or anything else.
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {

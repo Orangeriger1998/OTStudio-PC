@@ -9,6 +9,7 @@ const CHANNELS = [
   'generate', 'expand', 'upscale', 'media:size', 'video:lastFrame', 'cancel', 'remove', 'download:retry', 'save', 'folder:open', 'folder:change',
   'snippet:parse', 'service:rebuild', 'service:test', 'service:save', 'service:remove', 'service:export', 'service:import',
   'lora:add', 'lora:edit', 'lora:remove', 'lora:import', 'lora:export', 'lora:pickPhotos', 'lora:train', 'lora:cancel', 'lora:forget',
+  'chat:send', 'chat:go', 'chat:cancel', 'chat:clear', 'chat:models', 'media:menu',
   'hosts:remove', 'link:open',
 ];
 
@@ -22,6 +23,7 @@ for (const channel of CHANNELS) {
   };
 }
 api.onJob = (callback) => ipcRenderer.on('job', (_event, entry) => callback(entry));
+api.onChat = (callback) => ipcRenderer.on('chat', (_event, messages) => callback(messages));
 api.onLoras = (callback) => ipcRenderer.on('loras', (_event, state) => callback(state));
 
 contextBridge.exposeInMainWorld('ot', api);

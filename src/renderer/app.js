@@ -44,6 +44,8 @@ async function init() {
   document.getElementById('viewer').addEventListener('click', closeViewer);
   document.addEventListener('keydown', onKey);
   ot.onJob(onJob);
+  ot.onChat((messages) => { S.chat = messages; if (ui.tab === 'chat') renderChatList(); });
+  if (S.settings.chatModel) ui.tab = 'chat';
   ot.onLoras((st) => { S.loras = st; if (ui.tab === 'loras') softRender(); });
   document.getElementById('main').addEventListener('focusout', () => { if (ui.pendingRender) setTimeout(() => { if (!typing()) { ui.pendingRender = false; render(); } }, 0); });
   render();
@@ -55,6 +57,7 @@ function onJob(entry) {
   const i = S.history.findIndex((e) => e.id === entry.id);
   if (i >= 0) S.history[i] = entry; else S.history.unshift(entry);
   if (ui.tab === entry.kind) renderGallery();
+  if (ui.tab === 'chat' && S.chat.some((m) => m.jobId === entry.id)) renderChatList();
 }
 
 function services(kind) {
@@ -110,7 +113,7 @@ function render() {
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === ui.tab));
   const main = document.getElementById('main');
   const scroll = { c: document.querySelector('.composer')?.scrollTop, g: document.querySelector('.gallery')?.scrollTop, p: document.querySelector('.page')?.scrollTop };
-  main.replaceChildren(ui.tab === 'settings' ? settingsPage() : ui.tab === 'loras' ? lorasPage() : studio(ui.tab));
+  main.replaceChildren(ui.tab === 'settings' ? settingsPage() : ui.tab === 'loras' ? lorasPage() : ui.tab === 'chat' ? chatPage() : studio(ui.tab));
   if (document.querySelector('.composer') && scroll.c) document.querySelector('.composer').scrollTop = scroll.c;
   if (document.querySelector('.gallery') && scroll.g) document.querySelector('.gallery').scrollTop = scroll.g;
   if (document.querySelector('.page') && scroll.p) document.querySelector('.page').scrollTop = scroll.p;
@@ -705,6 +708,164 @@ function trainingsSection() {
   }))));
 }
 
+// ---------- chat ----------
+
+const chatUi = { text: '', attach: [], busy: false, models: null, modelError: '' };
+
+function chatPage() {
+  const s = S.settings;
+  const header = h('div', { class: 'chat-head' },
+    h('h2', { class: 'grow', text: 'Chat' }),
+    h('label', { class: 'row' }, h('span', { class: 'note', text: 'Chat model' }), chatModelSelect()),
+    h('button', { class: 'btn small', text: 'Clear chat', onclick: () => clearChat(false) }),
+    h('button', { class: 'btn small danger', text: 'Clear chat and delete its pictures', onclick: () => clearChat(true) }));
+  const list = h('div', { class: 'chat-list', id: 'chat-list' }, chatMessages());
+  const input = h('textarea', { id: 'chat-input', class: 'chat-input', rows: 2, value: chatUi.text, placeholder: 'Ask for a picture or a video, or describe a change. Enter sends; Shift+Enter starts a new line.',
+    oninput: (e) => { chatUi.text = e.target.value; }, onkeydown: chatKey });
+  const attach = h('div', { class: 'pics', id: 'chat-attach' }, chatAttachments());
+  const composer = h('div', { class: 'chat-compose' }, attach,
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', text: 'Photo', title: 'Attach photos', onclick: attachChatPhotos }),
+      h('div', { class: 'grow' }, input),
+      h('button', { class: 'btn primary', id: 'chat-send', text: 'Send', disabled: chatUi.busy, onclick: sendChat })),
+    h('div', { class: 'note', text: `${s.autoSave ? 'Finished pictures and videos are saved to your folders automatically. ' : ''}Nothing is billed until you click Go.` }));
+  const page = h('div', { class: 'chat' }, header, s.chatModel ? null : h('div', { class: 'message info', text: 'Choose your chat model above. It runs in Ollama on this PC; no chat text leaves your computer.' }), list, composer);
+  setTimeout(() => { const l = document.getElementById('chat-list'); if (l) l.scrollTop = l.scrollHeight; }, 0);
+  if (!chatUi.models && !chatUi.loadingModels) loadChatModels();
+  return page;
+}
+
+async function loadChatModels() {
+  chatUi.loadingModels = true;
+  try { chatUi.models = await ot.chatModels(); chatUi.modelError = ''; }
+  catch (e) { chatUi.models = []; chatUi.modelError = e.message; }
+  chatUi.loadingModels = false;
+  if (ui.tab === 'chat') softRender();
+}
+
+function chatModelSelect() {
+  const models = chatUi.models || [];
+  const current = S.settings.chatModel;
+  if (!models.length) return h('span', { class: 'note', text: chatUi.modelError ? 'Ollama is not running' : chatUi.loadingModels ? 'Loading...' : 'No models in Ollama', title: chatUi.modelError });
+  return h('select', { onchange: async (e) => { S.settings = await ot.settingsSet({ chatModel: e.target.value }); render(); } },
+    current ? null : h('option', { value: '', text: 'Choose a model', selected: true }),
+    models.map((m) => h('option', { value: m, text: m, selected: m === current })));
+}
+
+function chatAttachments() {
+  return chatUi.attach.map((n, i) => h('div', { class: 'pic' }, h('img', { src: mediaUrl(n), alt: '' }),
+    h('button', { text: 'Remove', onclick: () => { chatUi.attach.splice(i, 1); refreshChatAttach(); } })));
+}
+function refreshChatAttach() { const a = document.getElementById('chat-attach'); if (a) a.replaceChildren(...chatAttachments()); }
+
+async function attachChatPhotos() {
+  try { chatUi.attach = [...chatUi.attach, ...(await ot.picturesPick(true))].slice(0, 14); refreshChatAttach(); }
+  catch (e) { snack(e.message); }
+}
+
+function chatKey(e) {
+  if (e.key !== 'Enter' || e.shiftKey) return;
+  e.preventDefault();
+  const pending = [...S.chat].reverse().find((m) => m.state === 'proposed');
+  if (!chatUi.text.trim() && !chatUi.attach.length && pending) goPlan(pending.id);
+  else sendChat();
+}
+
+async function sendChat() {
+  if (chatUi.busy) return;
+  const text = chatUi.text.trim();
+  const attachments = [...chatUi.attach];
+  if (!text && !attachments.length) return;
+  chatUi.busy = true;
+  chatUi.text = '';
+  chatUi.attach = [];
+  const input = document.getElementById('chat-input');
+  if (input) input.value = '';
+  refreshChatAttach();
+  // Older plans that were not used are set aside, so Go always means the newest one.
+  for (const m of S.chat) if (m.state === 'proposed') ot.chatCancel(m.id).catch(() => {});
+  S.chat = [...S.chat, { id: 'pending-user', role: 'user', text, attachments }, { id: 'pending', role: 'assistant', thinking: true }];
+  renderChatList();
+  try { await ot.chatSend(text, attachments); } catch (e) { snack(e.message); }
+  chatUi.busy = false;
+  S.chat = S.chat.filter((m) => !String(m.id).startsWith('pending'));
+  renderChatList();
+  const b = document.getElementById('chat-send');
+  if (b) b.disabled = false;
+  if (input) input.focus();
+}
+
+async function goPlan(id) {
+  try { await ot.chatGo(id); } catch (e) { snack(e.message); }
+}
+
+async function clearChat(deleteMedia) {
+  const jobsInChat = S.chat.filter((m) => m.jobId).length;
+  const ask = deleteMedia
+    ? `Clear the chat and delete its ${jobsInChat} pictures and videos? They leave the Pictures and Videos tabs too, and the copies OT Studio saved for them go to the Recycle Bin. Results made on the other tabs stay.`
+    : 'Clear the chat? The pictures and videos stay on the Pictures and Videos tabs and in your folders.';
+  if (!window.confirm(ask)) return;
+  try {
+    const r = await ot.chatClear(deleteMedia);
+    S = await ot.state();
+    render();
+    if (deleteMedia) snack(`Removed ${r.removed} results. ${r.trashed} saved copies went to the Recycle Bin.`);
+  } catch (e) { snack(e.message); }
+}
+
+function renderChatList() {
+  const l = document.getElementById('chat-list');
+  if (!l) return;
+  const atBottom = l.scrollHeight - l.scrollTop - l.clientHeight < 80;
+  l.replaceChildren(...chatMessages());
+  if (atBottom) l.scrollTop = l.scrollHeight;
+}
+
+function chatMessages() {
+  if (!S.chat.length) return [h('div', { class: 'empty', text: 'Ask for a picture, for example: "a lighthouse at sunset, wide". Attach a photo to change it, or say "make it tall" about the last picture.' })];
+  return S.chat.map(chatBubble);
+}
+
+function chatBubble(m) {
+  if (m.role === 'user') {
+    return h('div', { class: 'bubble user' },
+      m.attachments && m.attachments.length ? h('div', { class: 'pics' }, m.attachments.map((n) => h('div', { class: 'pic' }, h('img', { src: mediaUrl(n), alt: '' })))) : null,
+      m.text ? h('div', { text: m.text }) : null);
+  }
+  if (m.thinking) return h('div', { class: 'bubble bot' }, h('span', { class: 'note', text: 'Thinking...' }));
+  const box = h('div', { class: `bubble bot${m.error ? ' error' : ''}` });
+  if (m.text) box.append(h('div', { text: m.text }));
+  if (m.plan) {
+    const plan = h('div', { class: 'plan' },
+      m.plan.source ? h('div', { class: 'row' }, h('div', { class: 'pic' }, h('img', { src: mediaUrl(m.plan.source), alt: '' })), h('span', { class: 'note', text: m.plan.sourceKind === 'attached' ? 'Your photo' : 'The last picture' })) : null,
+      h('div', {}, h('strong', { text: m.summary })), m.plan.prompt ? h('div', { class: 'note', text: `"${m.plan.prompt}"` }) : null, h('div', { class: 'note', text: `Price: ${m.price}.` }));
+    if (m.state === 'proposed') plan.append(h('div', { class: 'row' }, h('button', { class: 'btn primary small', text: 'Go', onclick: () => goPlan(m.id) }), h('button', { class: 'btn small', text: 'Cancel', onclick: () => ot.chatCancel(m.id) }), h('span', { class: 'note', text: 'Enter also means Go.' })));
+    else if (m.state === 'starting') plan.append(h('div', { class: 'note', text: 'Sending...' }));
+    else if (m.state === 'canceled') plan.append(h('div', { class: 'note', text: 'Not sent.' }));
+    else if (m.state === 'failed') plan.append(h('div', { class: 'message', text: m.error || 'The request could not be sent.' }));
+    box.append(plan);
+    if (m.jobId) box.append(chatResult(m.jobId));
+  }
+  return box;
+}
+
+function chatResult(id) {
+  const e = S.history.find((x) => x.id === id);
+  if (!e) return h('div', { class: 'note', text: 'This result was deleted.' });
+  if (BUSY.includes(e.state)) return h('div', { class: 'row' }, h('div', { class: 'spinner small' }), h('span', { class: 'note', text: `${STATE_WORDS[e.state]}${e.status ? `: ${e.status}` : ''}` }));
+  if (e.state !== 'done') return h('div', { class: 'message', text: e.error || STATE_WORDS[e.state] || e.state });
+  const media = e.files.map((name, i) => {
+    const menu = (ev) => { ev.preventDefault(); ot.mediaMenu(e.id, name).catch((x) => snack(x.message)); };
+    return e.kind === 'video'
+      ? h('video', { class: 'chat-media', src: mediaUrl(name), controls: true, preload: 'metadata', oncontextmenu: menu })
+      : h('img', { class: 'chat-media', src: mediaUrl(name), alt: e.prompt.slice(0, 100), onclick: () => openViewer(e.files, i), oncontextmenu: menu });
+  });
+  return h('div', { class: 'chat-result' }, ...media,
+    e.error ? h('div', { class: 'message', text: e.error }) : null,
+    h('div', { class: 'note' }, e.saved && e.saved.length ? 'Saved to your folder. ' : '', 'Right-click for Save as. ',
+      h('button', { class: 'link', text: `See the card on the ${e.kind === 'video' ? 'Videos' : 'Pictures'} tab`, onclick: () => { ui.tab = e.kind; render(); } })));
+}
+
 // ---------- viewer and messages ----------
 
 let viewer = null;
@@ -735,7 +896,7 @@ function snack(text, actions = []) {
 // ---------- settings ----------
 
 function settingsPage() {
-  return h('div', { class: 'page' }, keysSection(), servicesSection(), ui.adding ? addServiceSection() : null, foldersSection(), hostsSection(), viewSection(), aboutSection());
+  return h('div', { class: 'page' }, keysSection(), servicesSection(), ui.adding ? addServiceSection() : null, foldersSection(), chatSection(), hostsSection(), viewSection(), aboutSection());
 }
 
 function keyName(slot) {
@@ -908,7 +1069,18 @@ function foldersSection() {
   const row = (kind, label) => h('div', { class: 'item' }, h('strong', { class: 'w80', text: label }), h('span', { class: 'grow note', text: S.saveDirs[kind] }),
     h('button', { class: 'btn small', text: 'Open', onclick: () => ot.folderOpen(kind).catch((e) => snack(e.message)) }),
     h('button', { class: 'btn small', text: 'Change', onclick: async () => { S.saveDirs[kind] = await ot.folderChange(kind); render(); } }));
-  return h('section', {}, h('h2', { text: 'Save folders' }), h('div', { class: 'box' }, h('div', { class: 'list' }, row('image', 'Pictures'), row('video', 'Videos'))));
+  return h('section', {}, h('h2', { text: 'Save folders' }), h('div', { class: 'box' },
+    h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: S.settings.autoSave, onchange: async (e) => { S.settings = await ot.settingsSet({ autoSave: e.target.checked }); render(); } }),
+      h('span', { text: 'Save every finished picture and video to these folders automatically' })),
+    h('div', { class: 'list' }, row('image', 'Pictures'), row('video', 'Videos'))));
+}
+
+function chatSection() {
+  return h('section', {}, h('h2', { text: 'Chat' }), h('div', { class: 'box' },
+    h('div', { class: 'note', text: 'The Chat tab uses a model in Ollama on this PC. Your chat text stays on this computer; only the pictures and videos you start with Go reach a service.' }),
+    h('label', { class: 'row' }, h('span', { text: 'Ollama port' }),
+      h('input', { type: 'number', class: 'w90', min: 1024, max: 65535, value: String(S.settings.ollamaPort), onchange: async (e) => { try { S.settings = await ot.settingsSet({ ollamaPort: Number(e.target.value) }); chatUi.models = null; snack('Saved.'); } catch (x) { snack(x.message); } } }),
+      h('span', { class: 'note', text: 'Ollama uses 11434 unless you changed it.' }))));
 }
 
 function hostsSection() {

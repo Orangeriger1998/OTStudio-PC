@@ -4,6 +4,7 @@ OT Studio makes pictures and videos with your own API keys. This is the Windows 
 
 ## What it does
 
+- A Chat tab: ask for pictures and videos in plain words. A model in Ollama on your PC reads the messages, and nothing is billed until you click Go.
 - Pictures and videos from Replicate, SpicyAPI, and OpenRouter, each with its own key.
 - A simple view that shows only the main settings for each model, with every setting one click away.
 - Reference pictures, starting and ending pictures for videos, and a "Make a video" button on every finished picture.

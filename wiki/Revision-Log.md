@@ -1,5 +1,14 @@
 # Revision Log
 
+## 0.4.0 (2026-10-08)
+
+- A Chat tab: ask for pictures, edits, new shapes, upscales, videos, and longer videos in plain words. A model in Ollama on your PC reads the messages, and your chat text stays on your computer.
+- Every request shows what will happen, the picture it uses, and the price, and starts only when you click Go.
+- Chat results also get their full card on the Pictures or Videos tab.
+- Right-click a chat result for Save as, Show in folder, and Copy picture.
+- Every finished picture and video can now be saved to your folders automatically (on at first).
+- Clear chat keeps the pictures. Clear chat and delete its pictures moves the chat's saved copies to the Recycle Bin.
+
 ## 0.3.0 (2026-10-08)
 
 - A LoRAs tab: your FLUX dev LoRAs with Use for pictures, Strength, Export, and Remove.

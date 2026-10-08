@@ -389,7 +389,10 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
         fs.writeFileSync(path.join(mediaDir, name), buf);
         files.push(name);
       }
-      update(entry, { state: 'done', files, error: undefined, finished: now() });
+      const more = entry.op && ['expand', 'longer'].includes(entry.op.type);
+      // A job with a step on this PC is done only after that step, so nothing saves the unfinished result.
+      if (more) Object.assign(entry, { files, error: undefined, finished: now() });
+      else update(entry, { state: 'done', files, error: undefined, finished: now() });
     } catch (e) {
       update(entry, { state: 'failed', files, error: `The result is ready but could not be downloaded. ${e.message}`, canRetryDownload: !!(entry.remote && entry.remote.length), finished: now() });
       return;
@@ -499,7 +502,25 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
     return { status: res.status, answer: shorten(answer), paths };
   }
 
-  return { list: () => history, uploadBuffer, generate, expand, upscale, size, lastFrame, cancel, remove, retryDownload, tick, resume, addPicture, mediaPath, models, form, test, REPLICATE };
+  /** Records which chat message started a job, and where its copies were saved. */
+  function mark(id, patch) {
+    const e = find(id);
+    if (!e) return;
+    if (typeof patch.chat === 'string') e.chat = patch.chat;
+    if (Array.isArray(patch.saved)) e.saved = patch.saved.map(String);
+    save();
+    notify(e);
+  }
+
+  /** Deletes pictures the user attached (in-...) that no job uses anymore. */
+  function discard(names) {
+    for (const n of names) {
+      if (!/^in-[\w-]+\.\w+$/.test(n) || inUse(n)) continue;
+      try { fs.rmSync(mediaPath(n), { force: true }); } catch { /* a locked file stays; it is harmless */ }
+    }
+  }
+
+  return { list: () => history, uploadBuffer, mark, discard, generate, expand, upscale, size, lastFrame, cancel, remove, retryDownload, tick, resume, addPicture, mediaPath, models, form, test, REPLICATE };
 }
 
 /** A copy of [v] with long strings cut, so a test answer with picture data stays readable. */

@@ -10,14 +10,24 @@ class NetError extends Error {
 
 const NOT_SENT = new Set(['ENOTFOUND', 'ECONNREFUSED', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE']);
 
-/** [hosts]() returns the approved host list at call time. [fetchImpl] is the platform fetch. */
-function createNet(hosts, fetchImpl = globalThis.fetch) {
+/**
+ * [hosts]() returns the approved host list at call time. [fetchImpl] is the platform fetch. [local]() returns the exact
+ * origins on this PC that may be reached without https (only the local Ollama, http://127.0.0.1:<port>).
+ */
+function createNet(hosts, fetchImpl = globalThis.fetch, local = () => []) {
+  const reachable = (url) => {
+    if (allowed(url, hosts())) return true;
+    try {
+      const u = new URL(url);
+      return u.protocol === 'http:' && u.hostname === '127.0.0.1' && !u.username && !u.password && local().includes(u.origin);
+    } catch { return false; }
+  };
   async function request(url, { method = 'GET', headers = {}, body, timeout = 60000, keyHeaders = [] } = {}) {
     let current = url;
     let h = { ...headers };
     const keyOrigin = new URL(url).origin;
     for (let hop = 0; hop < 5; hop++) {
-      if (!allowed(current, hosts())) throw new NetError(`OT Studio is not allowed to reach ${safeHost(current)}.`, { sent: false });
+      if (!reachable(current)) throw new NetError(`OT Studio is not allowed to reach ${safeHost(current)}.`, { sent: false });
       let res;
       try {
         res = await fetchImpl(current, { method, headers: h, body, redirect: 'manual', signal: AbortSignal.timeout(timeout) });
