@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const chatplan = require('../core/chatplan');
 const replicate = require('../core/replicate');
 const settingwords = require('../core/settingwords');
+const refs = require('../core/refs');
 
 const PRICES = {
   'black-forest-labs/flux-schnell': 'about 0.3 cents', 'black-forest-labs/flux-dev': 'about 2.5 cents', 'black-forest-labs/flux-1.1-pro': 'about 4 cents',
@@ -159,8 +160,15 @@ function createChat({ store, jobs, llm, settings, services, trash, notify, now =
         if ('duration' in o) { plan.settings.duration = o.duration; shown.push(`Length ${o.duration}`); }
       }
       if (ext.missing.length) notes.push(`Not on this model: ${ext.missing.join(', ')}.`);
+      const room = plan.action === 'edit' && pick.form.pictures[0] ? pick.form.pictures[0].max || 1 : 0;
+      if (room && plan.sourceKind === 'attached' && attached.length > room) {
+        notes.push(`${modelName(pick.model, pick.service)} takes only ${room} picture${room === 1 ? '' : 's'}, so the others are left out. For several pictures, choose Seedream 4.5, FLUX.2 dev, or Qwen Image Edit Plus under Edits with.`);
+      }
       if (ext.problems.length) notes.push(`Left at the model default: ${ext.problems.join('; ')}.`);
       plan.prompt = settingwords.stripSettingWords(plan.prompt) || plan.prompt;
+      // Picture labels (@img1, @img2) must reach the job unchanged; a small model sometimes drops or rewrites them.
+      const labels = refs.references(words);
+      if (labels.length && labels.some((n) => !refs.references(plan.prompt).includes(n))) plan.prompt = settingwords.stripSettingWords(words) || words;
     } else if (plan.action === 'upscale') {
       plan.scale = /\b(2\s*x|x\s*2|2 times|two times|twice|double)\b/i.test(words) ? 2 : 4;
       plan.faceEnhance = /\bfaces?\b/i.test(words);

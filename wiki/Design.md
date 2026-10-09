@@ -12,7 +12,7 @@ The left panel is the form:
 
 - **Service** and **Model**. Replicate lists a short set of models; **Add** takes any other Replicate model as owner/name. OpenRouter loads its full model list, and each model shows only the settings it supports.
 - **Describe it**, the prompt.
-- Picture inputs, with a **Remove** button on each picture and **Add another picture** while there is room.
+- Picture inputs, with a label in each picture's corner (@img1, @img2, numbered in the order they are sent), a **Remove** button, an arrow that moves a picture earlier, and **Add another picture** while there is room.
 - Settings. The simple view shows the main ones, such as shape, resolution, length, and the safety switch. **Show all settings** shows every setting the model has. Settings that do not count with the current choices stay hidden and are not sent: for Seedream 4.5, Width and Height appear only when Size is custom, and Shape only when it is not.
 - **Make the picture** or **Make the video**.
 

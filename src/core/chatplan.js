@@ -33,6 +33,7 @@ target says which media the action uses: none, last_picture, last_video, or atta
 shape: the shape the user asks for: wide, tall, square, or an exact ratio such as 4:3; otherwise keep.
 seconds: video length if the user says one, otherwise 0.
 prompt: a clear description for the model, in English. For edit, describe only the change. For make_video from a picture, describe the motion.
+Keep picture labels such as @img1 and @img2 exactly as written in the prompt.
 reply: one short sentence to the user.`;
 
 const HELP = `You are the assistant inside OT Studio, a Windows app that makes pictures and videos with the user's own API keys

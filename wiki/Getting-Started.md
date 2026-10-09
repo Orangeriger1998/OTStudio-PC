@@ -22,6 +22,12 @@ Open **Videos** and follow the same steps. To start a video from a picture you m
 
 Editing models such as Seedream 4.5, Qwen Image Edit Plus, and FLUX Kontext take pictures. Click **Choose a picture**, or click **Use as reference** on a card. Seedream 4.5 takes up to 14 pictures.
 
+## Name the pictures in your description
+
+Every picture you add gets a label in its corner: @img1, @img2, and so on, in the order they are sent. Use the labels in the description, for example "Take the facial expression of @img1 and apply it to the woman in @img2". OT Studio sends the model "image 1" and "image 2", the wording these models are trained on. The arrow button on a picture moves it earlier, which changes its number. If the description mentions a label with no picture, such as @img3 with two pictures, OT Studio says so and sends nothing.
+
+The card keeps the pictures with their labels and your own wording, and shows what the model received, so the labels mean the same thing later. The Chat tab labels attached photos the same way.
+
 ## Edit, expand, and upscale a picture
 
 - **Edit** opens the picture on the Pictures tab with the editing model you used last (FLUX Kontext dev at first). Describe the change. Seedream 4.5, FLUX.2 dev, and Qwen Image Edit Plus also take more reference pictures.

@@ -159,7 +159,9 @@ function composer(kind) {
         h('textarea', { id: `prompt-${kind}`, value: f.prompt, placeholder: kind === 'video' ? 'What happens in the video' : 'What the picture shows', oninput: (e) => { f.prompt = e.target.value; } })));
     }
     if (f.service === 'replicate' && LORA_BASES.some((b) => b.model === f.model)) out.push(loraChooser(f));
-    for (const p of f.form.pictures) out.push(pictureInput(kind, p));
+    let offset = 0;
+    for (const p of f.form.pictures) { out.push(pictureInput(kind, p, offset)); offset += (f.pictures[p.name] || []).length; }
+    if (offset >= 2) out.push(h('div', { class: 'note', text: `Refer to the pictures by their labels, for example "the smile from @img1 on the woman in @img2". OT Studio tells the model which picture is which ("image 1", "image 2").` }));
     const simple = S.settings.simpleView;
     // Settings that do not count with the current choices (Seedream's width without a custom size) are hidden.
     const shown = f.form.controls.filter((c) => (!simple || c.simple || c.required) && settingActive(c, f.form.controls, f.options));
@@ -228,14 +230,21 @@ function control(f, c) {
   return h('label', { class: 'field' }, h('span', { class: 'name', text: c.label || c.name }), input, range, note, tech);
 }
 
-function pictureInput(kind, p) {
+/** A picture with its label (@img1, @img2) in the corner. */
+function labeledPic(name, n, extra = []) {
+  return h('div', { class: 'pic' }, h('img', { src: mediaUrl(name), alt: `@img${n}` }), h('span', { class: 'label', text: `@img${n}` }), ...extra);
+}
+
+function pictureInput(kind, p, offset = 0) {
   const f = ui.forms[kind];
   const list = f.pictures[p.name] || [];
   const max = p.max || 1;
   return h('div', { class: 'field' },
     h('span', { class: 'name', text: `${p.label || p.name}${max > 1 ? ` (up to ${max})` : ''}${p.required ? ', needed' : ''}` }),
-    h('div', { class: 'pics' }, list.map((name, i) => h('div', { class: 'pic' }, h('img', { src: mediaUrl(name), alt: '' }),
-      h('button', { text: 'Remove', title: 'Remove this picture', onclick: () => { list.splice(i, 1); f.pictures[p.name] = list; render(); } })))),
+    h('div', { class: 'pics' }, list.map((name, i) => labeledPic(name, offset + i + 1, [
+      h('button', { text: 'Remove', title: 'Remove this picture', onclick: () => { list.splice(i, 1); f.pictures[p.name] = list; render(); } }),
+      i > 0 ? h('button', { class: 'move', text: '\u2190', title: `Move earlier (becomes @img${offset + i})`, onclick: () => { [list[i - 1], list[i]] = [list[i], list[i - 1]]; f.pictures[p.name] = list; render(); } }) : null,
+    ]))),
     list.length < max ? h('div', {}, h('button', { class: 'btn small', text: list.length ? 'Add another picture' : 'Choose a picture', onclick: () => pickPictures(kind, p) })) : null,
     p.note ? h('span', { class: 'note', text: p.note }) : null);
 }
@@ -327,7 +336,8 @@ function card(e) {
     e.op && e.op.type === 'expand' && !e.prompt ? h('div', { class: 'prompt', text: `Expanded to ${e.op.ratio}` }) : null,
     h('div', { class: 'note', text: meta.join(' · ') }),
     running && e.status ? h('div', { class: 'note', text: e.status }) : null,
-    e.error ? h('div', { class: 'message', text: e.error }) : null);
+    e.error ? h('div', { class: 'message', text: e.error }) : null,
+    usedPictures(e));
 
   const actions = h('div', { class: 'actions' });
   const add = (text, fn, cls = '') => actions.append(h('button', { class: `btn small ${cls}`, text, onclick: fn }));
@@ -346,6 +356,16 @@ function card(e) {
   if (e.canRetryDownload && e.state === 'failed') add('Download again', () => ot.downloadRetry(e.id).catch((x) => snack(x.message)));
   if (!running) { add('Repeat', () => repeat(e)); add('Delete', () => removeEntries([e.id]), 'danger'); }
   return h('article', { class: 'card' }, mediaBox, thumbs, body, actions);
+}
+
+/** The pictures a job was given, labeled as they were sent (@img1 is the first), so a description stays readable later. */
+function usedPictures(e) {
+  const list = Object.values(e.pictures || {}).flat().filter(Boolean);
+  if (!list.length) return null;
+  return h('div', { class: 'used' },
+    h('span', { class: 'note', text: list.length === 1 ? 'Picture used:' : 'Pictures used:' }),
+    h('div', { class: 'pics small' }, list.map((n, i) => labeledPic(n, i + 1))),
+    e.sentPrompt ? h('div', { class: 'note', title: 'What the model received', text: `Sent as: "${e.sentPrompt}"` }) : null);
 }
 
 function modelName(e) {
@@ -919,8 +939,7 @@ function mediaChoices(kind) {
 }
 
 function chatAttachments() {
-  return chatUi.attach.map((n, i) => h('div', { class: 'pic' }, h('img', { src: mediaUrl(n), alt: '' }),
-    h('button', { text: 'Remove', onclick: () => { chatUi.attach.splice(i, 1); refreshChatAttach(); } })));
+  return chatUi.attach.map((n, i) => labeledPic(n, i + 1, [h('button', { text: 'Remove', onclick: () => { chatUi.attach.splice(i, 1); refreshChatAttach(); } })]));
 }
 function refreshChatAttach() { const a = document.getElementById('chat-attach'); if (a) a.replaceChildren(...chatAttachments()); }
 
@@ -995,7 +1014,7 @@ function chatMessages() {
 function chatBubble(m) {
   if (m.role === 'user') {
     return h('div', { class: 'bubble user' },
-      m.attachments && m.attachments.length ? h('div', { class: 'pics' }, m.attachments.map((n) => h('div', { class: 'pic' }, h('img', { src: mediaUrl(n), alt: '' })))) : null,
+      m.attachments && m.attachments.length ? h('div', { class: 'pics' }, m.attachments.map((n, i) => labeledPic(n, i + 1))) : null,
       m.text ? h('div', { text: m.text }) : null);
   }
   if (m.thinking) return h('div', { class: 'bubble bot' }, h('span', { class: 'note', text: 'Thinking...' }));
@@ -1004,7 +1023,7 @@ function chatBubble(m) {
   if (m.plan) {
     const plan = h('div', { class: 'plan' },
       // (the picture this plan uses, then what will happen, the settings, the notes, and the price)
-      m.plan.source ? h('div', { class: 'row' }, h('div', { class: 'pic' }, h('img', { src: mediaUrl(m.plan.source), alt: '' })), h('span', { class: 'note', text: m.plan.sourceKind === 'attached' ? 'Your photo' : 'The last picture' })) : null,
+      m.plan.source ? planPictures(m) : null,
       h('div', {}, h('strong', { text: m.summary })),
       m.settingsLine ? h('div', { class: 'settings-line', text: m.settingsLine }) : null,
       m.notesLine ? h('div', { class: 'note warn', text: m.notesLine }) : null,
@@ -1017,6 +1036,15 @@ function chatBubble(m) {
     if (m.jobId) box.append(chatResult(m.jobId));
   }
   return box;
+}
+
+/** The pictures a plan will send, labeled in the order they are sent. */
+function planPictures(m) {
+  const user = S.chat.slice(0, S.chat.indexOf(m)).reverse().find((x) => x.role === 'user');
+  const attached = m.plan.sourceKind === 'attached' && user && user.attachments && user.attachments.length ? user.attachments : [m.plan.source];
+  const list = m.plan.action === 'edit' ? attached : [m.plan.source];
+  return h('div', { class: 'row' }, h('div', { class: 'pics' }, list.map((n, i) => labeledPic(n, i + 1))),
+    h('span', { class: 'note', text: m.plan.sourceKind === 'attached' ? (list.length > 1 ? 'Your photos, in this order' : 'Your photo') : 'The last picture' }));
 }
 
 function chatResult(id) {

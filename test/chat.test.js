@@ -171,3 +171,11 @@ test('an OpenRouter video price comes from its own per-second price and the leng
   assert.equal(m.price, 'about $1.00');
   assert.ok(m.settingsLine.includes('Length 10 seconds'));
 });
+
+test('chat: picture labels survive the chat model, and a one-picture editing model is named before Go', async () => {
+  const words = 'Take the facial expression of @img1 and apply it to the woman in @img2';
+  const s = setup({ plan: raw({ action: 'edit', target: 'attached_photo', prompt: 'Apply the facial expression to the woman.' }) });
+  const m = await s.chat.send(words, ['in-a.png', 'in-b.png']);
+  assert.equal(m.plan.prompt, words, 'the labels are kept even when the chat model drops them');
+  assert.match(m.notesLine, /takes only 1 picture/);
+});

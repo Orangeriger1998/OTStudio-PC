@@ -14,6 +14,7 @@ const { NetError } = require('./netguard');
 const imaging = require('./imaging');
 const video = require('./video');
 const lora = require('../core/lora');
+const refs = require('../core/refs');
 
 const REPLICATE = { id: 'replicate', name: 'Replicate', keySlot: 'replicate', keyLabel: 'Replicate', builtin: true, special: true };
 const HISTORY_MAX = 2000;
@@ -184,6 +185,15 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
     const k = key(d);
     for (const names of Object.values(req.pictures || {})) for (const n of names) mediaPath(n);
     const entry = entryFor(kind, d, req);
+    // @img1, @img2 in the description name the pictures in the order they are sent; the model reads "image 1".
+    const pictureCount = Object.values(req.pictures || {}).reduce((n, list) => n + (Array.isArray(list) ? list.length : 0), 0);
+    const ref = refs.rewrite(req.prompt, pictureCount);
+    if (ref.missing.length) {
+      const have = pictureCount === 0 ? 'no picture is' : pictureCount === 1 ? 'only 1 picture is' : `only ${pictureCount} pictures are`;
+      throw new JobError(`The description mentions @img${ref.missing[0]}, but ${have} attached.`);
+    }
+    const sentPrompt = ref.text;
+    if (sentPrompt !== String(req.prompt || '')) entry.sentPrompt = sentPrompt;
     if (req.op && req.op.type === 'longer') {
       const parent = find(String(req.op.parent));
       if (!parent || parent.kind !== 'video' || parent.state !== 'done' || !parent.files.length) throw new JobError('The video to continue is gone.');
@@ -203,7 +213,7 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
       const version = await latestVersion(lora.QWEN_TRAINER, k);
       const [owner, name] = lora.QWEN_TRAINER.split('/');
       const controls = await versionSchema(owner, name, version, k);
-      const input = replicate.buildInput(controls, req.prompt, req.options || {}, {});
+      const input = replicate.buildInput(controls, sentPrompt, req.options || {}, {});
       request = { method: 'POST', url: `${replicate.BASE}/predictions`, body: JSON.stringify({ version, input }), headers: { ...bearer(k), 'Content-Type': 'application/json' }, keyHeaders: ['Authorization'] };
     } else if (own) {
       // A LoRA trained into the user's own private model: the public FLUX dev LoRA model cannot download it, so the
@@ -223,7 +233,7 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
         links[field] = [];
         for (const n of list) links[field].push(await uploadToReplicate(n, k));
       }
-      const input = replicate.buildInput(controls, req.prompt, options, links);
+      const input = replicate.buildInput(controls, sentPrompt, options, links);
       request = { method: 'POST', url: `${replicate.BASE}/predictions`, body: JSON.stringify({ version, input }), headers: { ...bearer(k), 'Content-Type': 'application/json' }, keyHeaders: ['Authorization'] };
     } else if (d.special) {
       const controls = await replicateSchema(req.model, kind, false);
@@ -233,13 +243,13 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
         links[field] = [];
         for (const n of names) links[field].push(await uploadToReplicate(n, k));
       }
-      const input = replicate.buildInput(controls, req.prompt, req.options || {}, links);
+      const input = replicate.buildInput(controls, sentPrompt, req.options || {}, links);
       const r = replicate.createRequest(req.model, input);
       request = { ...r, headers: { ...bearer(k), 'Content-Type': 'application/json' }, keyHeaders: ['Authorization'] };
     } else {
       const pictures = {};
       for (const [field, names] of Object.entries(req.pictures || {})) pictures[field] = names.map(dataUri);
-      const r = service.buildRequest(d, { prompt: req.prompt, model: req.model, options: req.options, pictures }, k, modelInfo(d, req.model));
+      const r = service.buildRequest(d, { prompt: sentPrompt, model: req.model, options: req.options, pictures }, k, modelInfo(d, req.model));
       request = { ...r, keyHeaders: d.keyHeader ? [d.keyHeader.name] : [] };
       entry.options = r.sent.options;
     }

@@ -1,5 +1,11 @@
 # Revision Log
 
+## 0.6.3 (2026-10-09)
+
+- Pictures carry labels, @img1, @img2, and so on, in the forms, in the chat, and on the cards. Use them in a description to say which picture is which; the model receives "image 1", "image 2".
+- An arrow on a picture moves it earlier. A label with no picture stops the request before anything is sent.
+- Cards show the pictures a job used, with their labels, and the wording the model received.
+
 ## 0.6.2 (2026-10-09)
 
 - Settings that cannot apply together no longer show together. For Seedream 4.5, Width and Height appear only when Size is custom, and Shape only when it is not; FLUX.2 dev and FLUX 1.1 pro show Width and Height only for a custom shape. Settings that do not apply are never sent.

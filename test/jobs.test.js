@@ -214,3 +214,27 @@ test('Make it longer: the new part is joined to the end of the earlier video', {
   jobs.remove(['parent00-0000']);
   assert.ok(fs.existsSync(path.join(dir, 'media', 'vid-parent00-0.mp4')), 'the longer video still refers to the earlier one, so it stays');
 });
+
+test('picture labels: @img1 and @img2 reach the model as "image 1" and "image 2", the job keeps the labels, and a missing picture stops the request', async () => {
+  const schema = { components: { schemas: { Input: { properties: { prompt: { type: 'string' }, image_input: { type: 'array', items: { type: 'string', format: 'uri' } } }, required: ['prompt'] } } } };
+  let uploads = 0;
+  const { jobs, calls, dir } = setup([
+    { url: 'https://api.replicate.com/v1/models/bytedance/seedream-4.5', reply: () => json(200, { owner: 'bytedance', name: 'seedream-4.5', latest_version: { openapi_schema: schema } }) },
+    { method: 'POST', url: 'https://api.replicate.com/v1/files', reply: () => json(201, { urls: { get: `https://api.replicate.com/v1/files/f${++uploads}` } }) },
+    { method: 'POST', url: 'https://api.replicate.com/v1/models/bytedance/seedream-4.5/predictions', reply: () => json(201, { id: 'p1', status: 'starting' }) },
+  ]);
+  const src = path.join(dir, 'a.png');
+  fs.writeFileSync(src, PNG);
+  const a = jobs.addPicture(src);
+  const b = jobs.addPicture(src);
+  const words = 'Take the facial expression of @img1 and apply it to the woman in @img2.';
+  await assert.rejects(jobs.generate({ kind: 'image', service: 'replicate', model: 'bytedance/seedream-4.5', prompt: 'the woman in @img3', options: {}, pictures: { image_input: [a, b] } }), /mentions @img3, but only 2 pictures are attached/);
+  const entry = await jobs.generate({ kind: 'image', service: 'replicate', model: 'bytedance/seedream-4.5', prompt: words, options: {}, pictures: { image_input: [a, b] } });
+  await settle();
+  const sent = JSON.parse(calls.find((c) => c.url.endsWith('/predictions')).body).input;
+  assert.equal(sent.prompt, 'Take the facial expression of image 1 and apply it to the woman in image 2.');
+  assert.deepEqual(sent.image_input, ['https://api.replicate.com/v1/files/f1', 'https://api.replicate.com/v1/files/f2'], 'pictures go in label order');
+  const e = jobs.list().find((x) => x.id === entry.id);
+  assert.equal(e.prompt, words, 'the job keeps the labels');
+  assert.equal(e.sentPrompt, sent.prompt);
+});

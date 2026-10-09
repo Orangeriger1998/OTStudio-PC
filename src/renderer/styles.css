@@ -154,3 +154,8 @@ select.chat-model { width: 100%; }
 .viewer .prev { left: 24px; }
 .viewer .next { right: 24px; }
 .viewer-count { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.7); padding: 4px 12px; border-radius: 12px; font-size: 13px; color: #ddd; }
+.pic .label { position: absolute; left: 3px; bottom: 3px; background: rgba(0,0,0,.78); color: var(--accent); font: 600 11px Consolas, monospace; padding: 1px 5px; border-radius: 6px; }
+.pic .move { top: auto; right: auto; left: 3px; top: 3px; }
+.pics.small .pic { width: 52px; height: 52px; }
+.pics.small .pic .label { font-size: 10px; }
+.used { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--line); padding-top: 6px; }
