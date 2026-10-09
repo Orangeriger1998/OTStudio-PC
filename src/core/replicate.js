@@ -77,6 +77,7 @@ function parseSchema(doc, kind, model) {
     c.simple = SIMPLE.has(name) || c.picture || (c.required && name !== 'prompt');
     out.push(c);
   }
+  linkSettings(out);
   return out.sort((a, b) => a.order - b.order);
 }
 
@@ -102,6 +103,37 @@ function coerce(c, raw) {
  * The prediction input. [pictures] holds uploaded https links by input name. Only settings the model lists are sent, and an
  * empty setting is left out so the model's own default applies.
  */
+/**
+ * Settings that count only in some cases, such as Seedream's width and height ("only used when size='custom'") and its
+ * shape ("only used when size is not 'custom'"). Each such setting gets a rule, { name, is } or { name, not }, read from
+ * the model's own description, or, for width and height, from a sibling list that offers "custom".
+ */
+function linkSettings(controls) {
+  const byName = new Map(controls.map((c) => [c.name, c]));
+  for (const c of controls) {
+    const d = String(c.note || '');
+    const not = /only (?:used|applies|applied) (?:when|if)\s+([a-z_]+)\s+is not\s+['"]?([\w:.-]+)['"]?/i.exec(d);
+    const is = /only (?:used|applies|applied) (?:when|if)\s+([a-z_]+)\s*(?:=|==|is)\s*['"]?([\w:.-]+)['"]?/i.exec(d);
+    if (not && byName.has(not[1]) && not[1] !== c.name) c.when = { name: not[1], not: not[2] };
+    else if (is && byName.has(is[1]) && is[1] !== c.name && is[2].toLowerCase() !== 'not') c.when = { name: is[1], is: is[2] };
+    else if (['width', 'height'].includes(c.name)) {
+      const owner = controls.find((x) => x.type === 'choice' && (x.choices || []).map(String).includes('custom'));
+      if (owner) c.when = { name: owner.name, is: 'custom' };
+    } else if (c.name === 'aspect_ratio' && c.type === 'choice' && !(c.choices || []).map(String).includes('custom')) {
+      const size = byName.get('size');
+      if (size && size.type === 'choice' && (size.choices || []).map(String).includes('custom')) c.when = { name: 'size', not: 'custom' };
+    }
+  }
+}
+
+/** Whether setting [c] counts with these [options] (an unset setting counts at its default). */
+function active(c, controls, options) {
+  if (!c.when) return true;
+  const owner = controls.find((x) => x.name === c.when.name);
+  const v = options[c.when.name] !== undefined ? options[c.when.name] : owner && owner.default;
+  return c.when.not !== undefined ? String(v) !== String(c.when.not) : String(v) === String(c.when.is);
+}
+
 function buildInput(controls, prompt, options, pictures) {
   const input = {};
   const names = new Set(controls.map((c) => c.name));
@@ -112,6 +144,8 @@ function buildInput(controls, prompt, options, pictures) {
   }
   for (const c of controls) {
     if (c.name === 'prompt') continue;
+    // A setting that does not count in this case (width without a custom size, for example) is never sent.
+    if (!active(c, controls, options)) continue;
     if (c.picture) {
       const links = (pictures[c.name] || []).filter(Boolean);
       if (links.some((u) => !/^https:\/\//.test(u))) throw new ServiceError('A picture link is not usable.');
@@ -158,4 +192,4 @@ function readPrediction(json) {
   return { state: 'running', taskId: id, status };
 }
 
-module.exports = { BASE, MODELS, LABELS, SIMPLE, EDIT_MODELS, parseSchema, buildInput, createRequest, readPrediction, label };
+module.exports = { BASE, MODELS, LABELS, SIMPLE, EDIT_MODELS, parseSchema, buildInput, active, linkSettings, createRequest, readPrediction, label };

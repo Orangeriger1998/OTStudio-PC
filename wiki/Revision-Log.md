@@ -1,5 +1,9 @@
 # Revision Log
 
+## 0.6.2 (2026-10-09)
+
+- Settings that cannot apply together no longer show together. For Seedream 4.5, Width and Height appear only when Size is custom, and Shape only when it is not; FLUX.2 dev and FLUX 1.1 pro show Width and Height only for a custom shape. Settings that do not apply are never sent.
+
 ## 0.6.1 (2026-10-08)
 
 - A job with several pictures shows all of them: a row of small pictures under the large one, and arrow buttons in the full-size view.

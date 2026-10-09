@@ -161,7 +161,8 @@ function composer(kind) {
     if (f.service === 'replicate' && LORA_BASES.some((b) => b.model === f.model)) out.push(loraChooser(f));
     for (const p of f.form.pictures) out.push(pictureInput(kind, p));
     const simple = S.settings.simpleView;
-    const shown = f.form.controls.filter((c) => !simple || c.simple || c.required);
+    // Settings that do not count with the current choices (Seedream's width without a custom size) are hidden.
+    const shown = f.form.controls.filter((c) => (!simple || c.simple || c.required) && settingActive(c, f.form.controls, f.options));
     for (const c of shown) out.push(control(f, c));
     const hidden = f.form.controls.length - shown.length;
     if (simple && hidden > 0) out.push(h('button', { class: 'link', text: `Show all settings (${hidden} more)`, onclick: () => setSimple(false) }));
@@ -190,6 +191,14 @@ async function forgetReplicateModel(kind, id) {
   await chooseService(kind, 'replicate', '');
 }
 
+/** The same rule as src/core/replicate.js active(): whether a setting counts with the current choices. */
+function settingActive(c, controls, options) {
+  if (!c.when) return true;
+  const owner = controls.find((x) => x.name === c.when.name);
+  const v = options[c.when.name] !== undefined ? options[c.when.name] : owner && owner.default;
+  return c.when.not !== undefined ? String(v) !== String(c.when.not) : String(v) === String(c.when.is);
+}
+
 function control(f, c) {
   const val = f.options[c.name] !== undefined ? f.options[c.name] : c.default;
   const set = (v) => { if (v === '' || v === undefined || (typeof v === 'number' && Number.isNaN(v))) delete f.options[c.name]; else f.options[c.name] = v; };
@@ -205,7 +214,8 @@ function control(f, c) {
   let input;
   if (c.type === 'choice') {
     const choices = c.choices || [];
-    input = h('select', { onchange: (e) => set(e.target.value === '' ? undefined : choices.find((x) => String(x) === e.target.value)) },
+    const ruled = f.form.controls.some((x) => x.when && x.when.name === c.name);
+    input = h('select', { onchange: (e) => { set(e.target.value === '' ? undefined : choices.find((x) => String(x) === e.target.value)); if (ruled) render(); } },
       val === undefined ? h('option', { value: '', text: 'Model default', selected: true }) : null,
       choices.map((x) => h('option', { value: String(x), text: String(x), selected: val !== undefined && String(x) === String(val) })));
   } else if (c.type === 'number') {
@@ -248,6 +258,7 @@ async function generate(kind) {
   for (const p of f.form.pictures) if ((f.pictures[p.name] || []).length) pictures[p.name] = f.pictures[p.name];
   const options = {};
   for (const c of f.form.controls) {
+    if (!settingActive(c, f.form.controls, f.options)) continue;
     if (f.options[c.name] !== undefined) options[c.name] = f.options[c.name];
     else if (c.name === 'disable_safety_checker' && c.default !== undefined) options[c.name] = c.default;
   }
