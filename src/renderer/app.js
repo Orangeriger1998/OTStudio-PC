@@ -158,7 +158,7 @@ function composer(kind) {
       out.push(h('label', { class: 'field' }, h('span', { class: 'name', text: 'Describe it' }),
         h('textarea', { id: `prompt-${kind}`, value: f.prompt, placeholder: kind === 'video' ? 'What happens in the video' : 'What the picture shows', oninput: (e) => { f.prompt = e.target.value; } })));
     }
-    if (f.service === 'replicate' && f.form.controls.some((c) => c.name === 'lora_weights')) out.push(loraChooser(f));
+    if (f.service === 'replicate' && LORA_BASES.some((b) => b.model === f.model)) out.push(loraChooser(f));
     for (const p of f.form.pictures) out.push(pictureInput(kind, p));
     const simple = S.settings.simpleView;
     const shown = f.form.controls.filter((c) => !simple || c.simple || c.required);
@@ -551,8 +551,18 @@ async function openUpscale({ source, scale, faceEnhance }) {
 
 // ---------- LoRAs ----------
 
-const LORA_MODEL = 'black-forest-labs/flux-dev-lora';
-const lt = { name: '', trigger: '', triggerEdited: false, photos: [], rejected: [], steps: 1000, rank: 16, error: '', busy: false, adding: false, ref: { name: '', reference: '', trigger: '', scale: 1 } };
+/** The two kinds of LoRA, the picture model that runs each, and the setting that carries the LoRA. */
+const LORA_BASES = [
+  { id: 'flux-dev', name: 'FLUX dev', model: 'black-forest-labs/flux-dev-lora', field: 'lora_weights', modelName: 'FLUX dev with a LoRA' },
+  { id: 'qwen-image', name: 'Qwen Image', model: 'qwen/qwen-image-lora-trainer', field: 'replicate_weights', modelName: 'Qwen Image with a LoRA' },
+];
+const loraBase = (id) => LORA_BASES.find((b) => b.id === (id || 'flux-dev')) || LORA_BASES[0];
+const lt = { base: 'flux-dev', name: '', trigger: '', triggerEdited: false, photos: [], rejected: [], steps: 1000, rank: 16, error: '', busy: false, adding: false, ref: { name: '', reference: '', trigger: '', scale: 1, baseModel: 'flux-dev' } };
+
+function suggestPhrase(name) {
+  const first = String(name || '').trim().split(/\s+/)[0].replace(/[^A-Za-z0-9'-]/g, '');
+  return first ? `a person named ${first[0].toUpperCase()}${first.slice(1)}` : 'a person';
+}
 
 function suggestTrigger(name) {
   let letters = String(name || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 12);
@@ -564,39 +574,45 @@ function withTrigger(prompt, trigger) {
   const p = String(prompt || '');
   if (!trigger) return p;
   const re = new RegExp(`(^|[^A-Za-z0-9_])${trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Za-z0-9_])`, 'i');
-  return re.test(p) ? p : `${trigger} ${p}`.trim();
+  if (re.test(p)) return p;
+  return (/\s/.test(trigger) ? `${trigger}, ${p}` : `${trigger} ${p}`).replace(/,\s*$/, '').trim();
 }
 
-/** Opens the Pictures form on FLUX dev with a LoRA, with the LoRA's trigger word in the prompt. */
+/** Opens the Pictures form on the model that runs this LoRA, with its trigger word (or Qwen description) in the prompt. */
 async function useLora(item) {
+  const base = loraBase(item.baseModel);
   ui.tab = 'image';
   const f = ui.forms.image;
   render();
-  await chooseService('image', 'replicate', LORA_MODEL);
-  if (f.model !== LORA_MODEL) { f.model = LORA_MODEL; await loadForm('image', false); }
+  await chooseService('image', 'replicate', base.model);
+  if (f.model !== base.model) { f.model = base.model; await loadForm('image', false); }
   applyLora(f, item);
-  f.hint = `Using the LoRA "${item.name}".${item.trigger ? ` Keep its trigger word ${item.trigger} in the prompt.` : ''}`;
+  f.hint = `Using the ${base.name} LoRA "${item.name}".${item.trigger ? ` Keep "${item.trigger}" in the prompt.` : ''}`;
   render();
   const box = document.getElementById('prompt-image');
   if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
 }
 
 function applyLora(f, item) {
-  if (!item) { delete f.options.lora_weights; delete f.options.lora_scale; return; }
-  f.options.lora_weights = item.reference;
+  for (const b of LORA_BASES) delete f.options[b.field];
+  delete f.options.lora_scale;
+  if (!item) return;
+  f.options[loraBase(item.baseModel).field] = item.reference;
   f.options.lora_scale = item.scale;
   f.prompt = withTrigger(f.prompt, item.trigger);
 }
 
 /** The "Saved LoRA" chooser shown above the settings of a model that takes a LoRA. */
 function loraChooser(f) {
-  const lib = S.loras.library;
-  const current = lib.find((l) => l.reference === f.options.lora_weights);
+  // Only LoRAs made for this model: a FLUX LoRA cannot run on Qwen Image, and a Qwen LoRA cannot run on FLUX.
+  const base = LORA_BASES.find((b) => b.model === f.model) || LORA_BASES[0];
+  const lib = S.loras.library.filter((l) => loraBase(l.baseModel).id === base.id);
+  const current = lib.find((l) => l.reference === f.options[base.field]);
   return h('label', { class: 'field' }, h('span', { class: 'name', text: 'Saved LoRA' }),
     h('select', { onchange: (e) => { applyLora(f, lib.find((l) => l.id === e.target.value)); render(); } },
-      h('option', { value: '', text: lib.length ? 'None' : 'None saved yet', selected: !current }),
+      h('option', { value: '', text: lib.length ? (base.id === 'qwen-image' ? 'Choose a Qwen LoRA' : 'None') : `No ${base.name} LoRAs saved yet`, selected: !current }),
       lib.map((l) => h('option', { value: l.id, text: l.trigger ? `${l.name} (${l.trigger})` : l.name, selected: current && current.id === l.id }))),
-    h('span', { class: 'note', text: 'Add or train LoRAs on the LoRAs tab.' }));
+    h('span', { class: 'note', text: base.id === 'qwen-image' ? 'Qwen Image with a LoRA always needs a Qwen LoRA. Train one on the LoRAs tab.' : 'Add or train LoRAs on the LoRAs tab.' }));
 }
 
 function lorasPage() {
@@ -606,14 +622,14 @@ function lorasPage() {
 function librarySection() {
   const lib = S.loras.library;
   const rows = lib.map((l) => h('div', { class: 'item' },
-    h('div', { class: 'grow' }, h('strong', { text: l.name }), ' ', l.trigger ? h('span', { class: 'chip', text: l.trigger }) : null, h('br'), h('span', { class: 'tech', text: l.reference })),
+    h('div', { class: 'grow' }, h('strong', { text: l.name }), ' ', h('span', { class: 'badge', text: loraBase(l.baseModel).name }), ' ', l.trigger ? h('span', { class: 'chip', text: l.trigger }) : null, h('br'), h('span', { class: 'tech', text: l.reference })),
     h('label', { class: 'row' }, h('span', { class: 'note', text: 'Strength' }),
       h('input', { type: 'number', class: 'w70', min: -1, max: 3, step: 0.05, value: String(l.scale), onchange: async (e) => { try { await ot.loraEdit(l.id, { scale: Number(e.target.value) }); } catch (x) { snack(x.message); } } })),
     h('button', { class: 'btn small primary', text: 'Use for pictures', onclick: () => useLora(l) }),
     h('button', { class: 'btn small', text: 'Export', onclick: async () => { try { const p = await ot.loraExport(l.id); if (p) snack(`Exported to ${p}`); } catch (x) { snack(x.message); } } }),
     h('button', { class: 'btn small danger', text: 'Remove', onclick: async () => { if (window.confirm(`Remove "${l.name}" from your LoRAs? The trained model stays in your Replicate account.`)) await ot.loraRemove(l.id); } })));
   const box = h('div', { class: 'box' },
-    h('div', { class: 'note', text: 'FLUX dev LoRAs teach the picture model a face, a person, or a style. Use one from here, or choose it under Saved LoRA on the Pictures tab when the model is FLUX dev with a LoRA.' }),
+    h('div', { class: 'note', text: 'LoRAs teach a picture model a face, a person, or a style. Each LoRA works only with its own model: FLUX dev LoRAs with FLUX dev with a LoRA, and Qwen Image LoRAs with Qwen Image with a LoRA. Use one from here, or choose it under Saved LoRA on the Pictures tab.' }),
     rows.length ? h('div', { class: 'list' }, rows) : h('div', { class: 'note', text: 'You have no LoRAs yet. Train one below, import a file from the phone app or the LoRA Trainer, or add one by its reference.' }),
     h('div', { class: 'row' },
       h('button', { class: 'btn', text: 'Import a LoRA file', onclick: async () => { try { const item = await ot.loraImport(); if (item) snack(`Added ${item.name}.`); } catch (x) { snack(x.message); } } }),
@@ -625,33 +641,60 @@ function librarySection() {
         textField('Trigger word', lt.ref.trigger, (v) => { lt.ref.trigger = v.trim(); })),
       textField('Reference', lt.ref.reference, (v) => { lt.ref.reference = v.trim(); }, 'owner/model, owner/model/version, or an https:// address of the weights.'),
       textField('Strength', String(lt.ref.scale), (v) => { lt.ref.scale = Number(v); }, 'From -1 to 3. 1 is the usual strength.'),
-      h('div', {}, h('button', { class: 'btn primary', text: 'Add', onclick: async () => { try { await ot.loraAdd(lt.ref); lt.adding = false; lt.ref = { name: '', reference: '', trigger: '', scale: 1 }; render(); } catch (x) { snack(x.message); } } }))));
+      h('label', { class: 'field' }, h('span', { class: 'name', text: 'Made for' }),
+        h('select', { onchange: (e) => { lt.ref.baseModel = e.target.value; } }, LORA_BASES.map((b) => h('option', { value: b.id, text: b.name, selected: lt.ref.baseModel === b.id })))),
+      h('div', {}, h('button', { class: 'btn primary', text: 'Add', onclick: async () => { try { await ot.loraAdd(lt.ref); lt.adding = false; lt.ref = { name: '', reference: '', trigger: '', scale: 1, baseModel: 'flux-dev' }; render(); } catch (x) { snack(x.message); } } }))));
   }
   return h('section', {}, h('h2', { text: 'Your LoRAs' }), box);
 }
 
+const TRAINER_TEXT = {
+  'flux-dev': {
+    choice: 'FLUX dev (standard): about $1.50 to $2', word: 'Trigger word', wordNote: 'A made-up word you put in prompts to call up the LoRA.',
+    steps: '3 to 6000. 1000 suits most faces.', rank: '1 to 128. 16 suits most faces.',
+    cost: 'Training runs on Replicate with ostris/flux-dev-lora-trainer. 1,000 steps cost about $1.50 to $2 and take about 20 to 30 minutes. The LoRA is kept in a private model in your Replicate account, and OT Studio adds it to your LoRAs when it is ready. FLUX dev LoRAs also work in the Android app.',
+    confirm: 'about $1.50 to $2 for 1,000 steps',
+  },
+  'qwen-image': {
+    choice: 'Qwen Image (alternate): about $1.40 to $2.75', word: 'How the photos describe the subject', wordNote: 'Plain words, not a made-up word: Qwen learns from familiar words. Every photo gets the caption "A photo of" these words, and you use them in your prompts.',
+    steps: '100 to 6000. 1000 to 2000 suit most faces.', rank: '8 to 128. 64 suits most faces.',
+    cost: 'Training runs on Replicate with qwen/qwen-image-lora-trainer on an H100, billed by the second (about $0.09 a minute). A run usually takes 15 to 30 minutes, so about $1.40 to $2.75. The LoRA is kept in a private model in your Replicate account and runs only on Qwen Image with a LoRA. The Android app cannot use Qwen LoRAs yet.',
+    confirm: 'about $1.40 to $2.75, billed by the second',
+  },
+};
+
 function trainSection() {
+  const tx = TRAINER_TEXT[lt.base];
+  const suggest = (name) => (lt.base === 'qwen-image' ? suggestPhrase(name) : suggestTrigger(name));
   const nameInput = h('input', { type: 'text', value: lt.name, placeholder: 'For example: Anna face', oninput: (e) => {
     lt.name = e.target.value;
-    if (!lt.triggerEdited) { lt.trigger = suggestTrigger(lt.name); const t = document.getElementById('lora-trigger'); if (t) t.value = lt.trigger; }
+    if (!lt.triggerEdited) { lt.trigger = suggest(lt.name); const t = document.getElementById('lora-trigger'); if (t) t.value = lt.trigger; }
   } });
+  const trainerSelect = h('label', { class: 'field' }, h('span', { class: 'name', text: 'Trainer' }),
+    h('select', { onchange: (e) => {
+      lt.base = e.target.value;
+      lt.rank = lt.base === 'qwen-image' ? 64 : 16;
+      if (!lt.triggerEdited) lt.trigger = lt.name ? suggest(lt.name) : '';
+      render();
+    } }, LORA_BASES.map((b) => h('option', { value: b.id, text: TRAINER_TEXT[b.id].choice, selected: lt.base === b.id }))));
   const photos = h('div', { class: 'pics' }, lt.photos.map((p, i) => h('div', { class: 'pic' }, h('img', { src: mediaUrl(p.name), alt: '' }),
     h('button', { text: 'Remove', onclick: () => { lt.photos.splice(i, 1); render(); } }))));
   return h('section', {}, h('h2', { text: 'Train a LoRA' }), h('div', { class: 'box' },
+    trainerSelect,
     h('div', { class: 'two' },
       h('label', { class: 'field' }, h('span', { class: 'name', text: 'Name' }), nameInput),
-      h('label', { class: 'field' }, h('span', { class: 'name', text: 'Trigger word' }),
-        h('input', { type: 'text', id: 'lora-trigger', value: lt.trigger, oninput: (e) => { lt.trigger = e.target.value.trim(); lt.triggerEdited = true; } }),
-        h('span', { class: 'note', text: 'A made-up word you put in prompts to call up the LoRA.' }))),
+      h('label', { class: 'field' }, h('span', { class: 'name', text: tx.word }),
+        h('input', { type: 'text', id: 'lora-trigger', value: lt.trigger, placeholder: lt.base === 'qwen-image' ? 'a person named Pao' : 'PAOFACE', oninput: (e) => { lt.trigger = e.target.value.replace(/^\s+/, ''); lt.triggerEdited = true; } }),
+        h('span', { class: 'note', text: tx.wordNote }))),
     h('div', { class: 'field' }, h('span', { class: 'name', text: `Photos (${lt.photos.length} of 20)` }),
       photos,
       lt.photos.length < 20 ? h('div', {}, h('button', { class: 'btn small', text: lt.photos.length ? 'Add more photos' : 'Choose photos', onclick: pickTrainingPhotos })) : null,
       h('span', { class: 'note', text: 'Choose 10 to 20 clear photos of the same face, person, or style, from different angles, in different light, and with different clothes and backgrounds. Each photo must be at least 512 pixels on its short side and at most 50 MB. JPG, PNG, and WebP work; save HEIC photos as JPEG first. OT Studio turns each photo upright and sends a JPEG copy; your originals stay untouched.' }),
       lt.rejected.length ? h('div', { class: 'message', text: `Not added:\n${lt.rejected.map((r) => `${r.file} ${r.reason}`).join('\n')}` }) : null),
     h('details', {}, h('summary', { text: 'More settings' }), h('div', { class: 'two' },
-      textField('Steps', String(lt.steps), (v) => { lt.steps = Number(v); }, '3 to 6000. 1000 suits most faces.'),
-      textField('Rank', String(lt.rank), (v) => { lt.rank = Number(v); }, '1 to 128. 16 suits most faces.'))),
-    h('div', { class: 'note', text: 'Training runs on Replicate with ostris/flux-dev-lora-trainer. 1,000 steps cost about $1.50 to $2 and take about 20 to 30 minutes. The LoRA is kept in a private model in your Replicate account, and OT Studio adds it to your LoRAs when it is ready.' }),
+      textField('Steps', String(lt.steps), (v) => { lt.steps = Number(v); }, tx.steps),
+      textField('Rank', String(lt.rank), (v) => { lt.rank = Number(v); }, tx.rank))),
+    h('div', { class: 'note', text: tx.cost }),
     lt.error ? h('div', { class: 'message', text: lt.error }) : null,
     h('div', {}, h('button', { class: 'btn primary', disabled: lt.busy, text: lt.busy ? 'Starting...' : 'Start training', onclick: startTraining }))));
 }
@@ -671,12 +714,12 @@ async function pickTrainingPhotos() {
 
 async function startTraining() {
   lt.error = '';
-  if (!lt.trigger) lt.trigger = suggestTrigger(lt.name);
-  if (!window.confirm(`Start training "${lt.name}" on Replicate? This is billed to your Replicate account: about $1.50 to $2 for 1,000 steps.`)) return;
+  lt.trigger = lt.trigger.trim() || (lt.base === 'qwen-image' ? suggestPhrase(lt.name) : suggestTrigger(lt.name));
+  if (!window.confirm(`Start training "${lt.name}" with the ${loraBase(lt.base).name} trainer on Replicate? This is billed to your Replicate account: ${TRAINER_TEXT[lt.base].confirm}.`)) return;
   lt.busy = true;
   render();
   try {
-    const record = await ot.loraTrain({ name: lt.name, trigger: lt.trigger, photos: lt.photos.map((p) => p.name), steps: lt.steps, rank: lt.rank });
+    const record = await ot.loraTrain({ base: lt.base, name: lt.name, trigger: lt.trigger, photos: lt.photos.map((p) => p.name), steps: lt.steps, rank: lt.rank });
     if (record.state === 'failed' || record.state === 'uncertain') lt.error = record.error;
     else { lt.name = ''; lt.trigger = ''; lt.triggerEdited = false; lt.photos = []; lt.rejected = []; snack('Training started. It usually takes 20 to 30 minutes.'); }
   } catch (x) { lt.error = x.message; }
@@ -709,7 +752,7 @@ function trainingsSection() {
       h('div', { class: 'grow' },
         h('strong', { text: t.name }), ' ', h('span', { class: `state ${t.state === 'succeeded' ? 'done' : running ? 'running' : 'failed'}`, text: TRAIN_WORDS[t.state] || t.state }),
         running ? h('span', { class: 'note', 'data-since': String(t.created), text: '' }) : null,
-        h('br'), h('span', { class: 'note', text: `${t.photos.length} photos · ${t.steps} steps · trigger ${t.trigger} · ${new Date(t.created).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` }),
+        h('br'), h('span', { class: 'note', text: `${loraBase(t.base).name} · ${t.photos.length} photos · ${t.steps} steps · ${t.base === 'qwen-image' ? `"${t.trigger}"` : `trigger ${t.trigger}`} · ${new Date(t.created).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` }),
         running ? h('div', {}, bar, h('span', { class: 'note', text: progressText })) : null,
         t.error ? h('div', { class: 'message', text: t.error }) : null),
       running && t.trainingId ? h('button', { class: 'btn small', text: 'Stop', onclick: async () => { if (window.confirm('Stop this training? Replicate still bills the time it has run.')) { try { await ot.loraCancel(t.id); } catch (x) { snack(x.message); } } } }) : null,
@@ -845,7 +888,7 @@ function replicateName(id) {
 /** Every model the chat can use for one kind of media: Replicate's list, then each service's own short list. */
 function mediaChoices(kind) {
   const out = [];
-  const replicateIds = [...S.replicateModels[kind].map(([id]) => id), ...(S.settings.replicateModels[kind] || [])];
+  const replicateIds = [...S.replicateModels[kind].map(([id]) => id), ...(S.settings.replicateModels[kind] || [])].filter((id) => id !== 'qwen/qwen-image-lora-trainer');
   for (const id of replicateIds) out.push({ value: `replicate|${id}`, text: `${replicateName(id)} (Replicate)` });
   for (const d of S.services.filter((x) => x.kind === kind)) {
     for (const m of (d.models && d.models.fixed) || []) out.push({ value: `${d.id}|${m.id}`, text: `${m.name || m.id} (${d.name})` });

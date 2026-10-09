@@ -1,6 +1,6 @@
 # LoRAs
 
-A LoRA teaches FLUX dev a face, a person, or a style. OT Studio keeps your LoRAs on the **LoRAs** tab, uses them for pictures, and can train new ones on Replicate.
+A LoRA teaches a picture model a face, a person, or a style. OT Studio works with two kinds: FLUX dev LoRAs and Qwen Image LoRAs. Each kind runs only on its own model, so the list labels every LoRA with its model. OT Studio keeps your LoRAs on the **LoRAs** tab, uses them for pictures, and can train new ones on Replicate.
 
 ## Use a LoRA
 
@@ -8,10 +8,25 @@ Click **Use for pictures** next to a LoRA. OT Studio opens the Pictures tab on F
 
 A LoRA you trained lives in a private model in your Replicate account. The public FLUX dev LoRA model cannot read private models, so OT Studio runs your trained model's own version instead. That version already contains the LoRA, so the result is the same.
 
+## Qwen Image LoRAs (the alternate trainer)
+
+**Trainer** on the training form offers FLUX dev (the standard trainer) or Qwen Image (the alternate). Some people find Qwen Image keeps a face closer, but there is no fair side-by-side test yet, so the best way to choose is to train both on the same photos and compare.
+
+The Qwen trainer differs from the FLUX trainer in a few ways:
+
+- Qwen learns from plain words, not a made-up trigger word. In place of a trigger word, the form asks how the photos describe the subject, such as "a person named Pao". Every photo gets the caption "A photo of a person named Pao", and you use the same words in your prompts.
+- It runs on qwen/qwen-image-lora-trainer on an H100, billed by the second (about $0.09 a minute). A run usually takes 15 to 30 minutes, so about $1.40 to $2.75.
+- Its usual settings are 1,000 to 2,000 steps and rank 64.
+- Its private model in your Replicate account is named lora-qwen- and the LoRA's name.
+
+A Qwen LoRA runs only on **Qwen Image with a LoRA**, on the Pictures tab, which always needs a Qwen LoRA chosen under **Saved LoRA**. The plain Qwen Image model and the Qwen editing models cannot use these LoRAs. OT Studio runs your trained model's own version; if Replicate returns only the weights file, OT Studio runs it on the trainer's own picture model. A Qwen picture costs about 2.5 to 3 cents.
+
+The Android app cannot use Qwen LoRAs yet. Exported Qwen LoRA files say they are for Qwen Image.
+
 ## Add a LoRA
 
 - **Import a LoRA file** reads a `.otstudio-lora.json` file from the Android app or the LoRA Trainer.
-- **Add by reference** takes a name, a trigger word, and a reference: owner/model, owner/model/version, or an https:// address of the weights.
+- **Add by reference** takes a name, a trigger word, a reference (owner/model, owner/model/version, or an https:// address of the weights), and the model it was made for.
 - **Export** saves a LoRA as a file for the phone app or another PC. The file holds the reference, not the weights, and no key.
 
 ## Train a LoRA

@@ -1,7 +1,7 @@
 {
   "name": "otstudio-pc",
   "productName": "OT Studio",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Pictures and videos from your own API keys, on Windows.",
   "author": "OrangeTiger",
   "license": "GPL-3.0-only",

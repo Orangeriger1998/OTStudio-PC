@@ -103,13 +103,17 @@ function createLoras({ store, keys, net, mediaDir, upload, notify, now = () => D
   }
 
   /** Starts a training. [photos] are names from addPhoto. This request is billed by Replicate. */
-  async function train({ name, trigger, photos, steps = 1000, rank = 16 }) {
+  async function train({ name, trigger, photos, steps = 1000, rank, base = 'flux-dev' }) {
     const n = String(name || '').trim();
+    const qwen = base === 'qwen-image';
+    if (!lora.BASES[base]) throw new TrainError('Choose a trainer.');
     if (!n || n.length > 80 || /\p{Cc}/u.test(n)) throw new TrainError('Give the LoRA a name of up to 80 characters.');
-    if (!lora.TRIGGER.test(String(trigger || ''))) throw new TrainError('Use a trigger word of letters, digits, or underscores that starts with a letter, such as MARKFACE.');
+    if (qwen && !lora.QWEN_PHRASE.test(String(trigger || ''))) throw new TrainError('Describe the subject in a few plain words, such as "a person named Pao".');
+    if (!qwen && !lora.TRIGGER.test(String(trigger || ''))) throw new TrainError('Use a trigger word of letters, digits, or underscores that starts with a letter, such as MARKFACE.');
     const s = Number(steps);
-    const r = Number(rank);
-    if (!Number.isInteger(s) || s < 3 || s > 6000 || !Number.isInteger(r) || r < 1 || r > 128) throw new TrainError('Steps must be 3 to 6000, and rank 1 to 128.');
+    const r = Number(rank ?? (qwen ? 64 : 16));
+    const limits = qwen ? { s: [100, 6000], r: [8, 128] } : { s: [3, 6000], r: [1, 128] };
+    if (!Number.isInteger(s) || s < limits.s[0] || s > limits.s[1] || !Number.isInteger(r) || r < limits.r[0] || r > limits.r[1]) throw new TrainError(`Steps must be ${limits.s[0]} to ${limits.s[1]}, and rank ${limits.r[0]} to ${limits.r[1]}.`);
     const list = Array.isArray(photos) ? photos.map(String) : [];
     if (list.length < 1 || list.length > 20) throw new TrainError('Choose 1 to 20 photos. 10 or more work best.');
     if (new Set(list).size !== list.length || list.some((p) => !/^tr-[\w-]+\.jpg$/.test(p) || !fs.existsSync(path.join(mediaDir, p)))) throw new TrainError('A chosen photo is gone. Choose the photos again.');
@@ -120,16 +124,27 @@ function createLoras({ store, keys, net, mediaDir, upload, notify, now = () => D
     const account = await api('GET', `${BASE}/account`, k);
     const owner = account.json && account.json.username;
     if (!account.res.ok || typeof owner !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(owner)) throw new TrainError(reason(account.json, 'Replicate did not report your account name.'));
-    const destination = await ensureDestination(k, owner, lora.destinationSlug(n));
+    // The Qwen trainer is run on its newest version, read from Replicate; the FLUX trainer stays on its checked version.
+    let trainer = lora.TRAINER;
+    let version = lora.TRAINER_VERSION;
+    if (qwen) {
+      trainer = lora.QWEN_TRAINER;
+      const m = await api('GET', `${BASE}/models/${trainer}`, k);
+      version = m.json && m.json.latest_version && m.json.latest_version.id;
+      if (!m.res.ok || typeof version !== 'string' || !/^[a-f0-9]{64}$/.test(version)) throw new TrainError(reason(m.json, 'Replicate did not report the Qwen trainer version.'));
+    }
+    const destination = await ensureDestination(k, owner, lora.destinationSlug(n, base));
     const fileUrl = await upload(archive, 'photos.zip', 'application/zip', k);
-    const record = { id: crypto.randomUUID(), name: n, trigger, steps: s, rank: r, destination, photos: list, state: 'sending', progress: null, created: now() };
+    const record = { id: crypto.randomUUID(), name: n, trigger, steps: s, rank: r, base, trainer, trainerVersion: version, destination, photos: list, state: 'sending', progress: null, created: now() };
     trainings.unshift(record);
     saveAll();
     let sent;
     try {
-      sent = await api('POST', `${BASE}/models/${lora.TRAINER}/versions/${lora.TRAINER_VERSION}/trainings`, k, {
-        destination, input: { input_images: fileUrl, trigger_word: trigger, steps: s, lora_rank: r, autocaption: true },
-      });
+      const input = qwen
+        // Qwen has no captioning step: every photo gets this one plain description.
+        ? { dataset: fileUrl, steps: s, lora_rank: r, default_caption: `A photo of ${trigger}`, batch_size: 1 }
+        : { input_images: fileUrl, trigger_word: trigger, steps: s, lora_rank: r, autocaption: true };
+      sent = await api('POST', `${BASE}/models/${trainer}/versions/${version}/trainings`, k, { destination, input });
     } catch (e) {
       const unknown = !(e instanceof NetError) || e.sent;
       Object.assign(record, unknown
@@ -159,11 +174,16 @@ function createLoras({ store, keys, net, mediaDir, upload, notify, now = () => D
       record.minutesLeft = lora.minutesLeft(record.firstStepAt, record.firstProgress, now(), record.progress);
       if (st === 'succeeded') {
         const version = json.output && typeof json.output.version === 'string' ? json.output.version.replace(':', '/') : '';
-        if (!new RegExp(`^${record.destination.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/[a-f0-9]{64}$`).test(version)) {
+        const weights = json.output && typeof json.output.weights === 'string' && /^https:\/\//.test(json.output.weights) ? json.output.weights : '';
+        const ownVersion = new RegExp(`^${record.destination.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/[a-f0-9]{64}$`).test(version);
+        // FLUX LoRAs must come back as a version of the private model. A Qwen LoRA may come back as a weights file
+        // instead, which Qwen Image with a LoRA can run.
+        const reference = ownVersion ? version : record.base === 'qwen-image' && weights ? weights : '';
+        if (!reference) {
           Object.assign(record, { state: 'failed', error: 'The finished training did not return a model version from your private model.' });
         } else {
-          const item = add({ name: record.name, reference: version, trigger: record.trigger, scale: 1 });
-          Object.assign(record, { state: 'succeeded', progress: 1, reference: version, loraId: item.id, finished: now() });
+          const item = add({ name: record.name, reference, trigger: record.trigger, scale: 1, baseModel: record.base || 'flux-dev' });
+          Object.assign(record, { state: 'succeeded', progress: 1, reference, loraId: item.id, finished: now() });
         }
       } else if (st === 'failed' || st === 'canceled') {
         Object.assign(record, { state: st, error: st === 'failed' ? reason({ error: json.error }, 'The training failed.') : undefined, finished: now() });

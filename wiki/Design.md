@@ -27,11 +27,11 @@ When a video is being made longer, the Videos form shows a blue note above the p
 
 ## LoRAs
 
-- **Your LoRAs**: each LoRA with its trigger word, its reference, a Strength box, **Use for pictures**, **Export**, and **Remove**. Below the list: **Import a LoRA file** and **Add by reference**.
-- **Train a LoRA**: the name, the trigger word (suggested from the name), the photos with a **Remove** button on each, the photo rules under the button, **More settings** (steps and rank), the price, and **Start training**.
+- **Your LoRAs**: each LoRA with its model (FLUX dev or Qwen Image), its trigger word or description, its reference, a Strength box, **Use for pictures**, **Export**, and **Remove**. Below the list: **Import a LoRA file** and **Add by reference**.
+- **Train a LoRA**: **Trainer** (FLUX dev, the standard, or Qwen Image, the alternate), the name, the trigger word (for Qwen, the words that describe the subject; both suggested from the name), the photos with a **Remove** button on each, the photo rules under the button, **More settings** (steps and rank), the price, and **Start training**.
 - **Trainings**: each training with its state, the time it has run, its stage in words, a progress bar (moving back and forth until the steps begin, then filling, with the minutes left), the time of the last check, and **Stop**, **Use for pictures**, or **Remove from list**.
 
-On the Pictures tab, FLUX dev with a LoRA shows a **Saved LoRA** chooser above its settings.
+On the Pictures tab, FLUX dev with a LoRA and Qwen Image with a LoRA show a **Saved LoRA** chooser above their settings, listing only the LoRAs made for that model.
 
 ## Settings
 

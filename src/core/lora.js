@@ -1,7 +1,7 @@
 'use strict';
-// FLUX dev LoRAs: the library format shared with the Android app and the LoRA Trainer ("otstudio-lora-v1"), the rules
-// for a usable reference, and reading training progress. A LoRA is data: a name, where its weights are, its trigger word,
-// and its strength.
+// LoRAs for FLUX dev and Qwen Image: the library format shared with the Android app and the LoRA Trainer
+// ("otstudio-lora-v1"), the rules for a usable reference, and reading training progress. A LoRA is data: a name, where
+// its weights are, its trigger word (or, for Qwen, the words that describe the subject), and its strength.
 
 const FORMAT = 'otstudio-lora-v1';
 const MODEL = 'black-forest-labs/flux-dev-lora';
@@ -10,6 +10,19 @@ const TRAINER_VERSION = '26dce37af90b9d997eeb970d92e47de3064d46c300504ae376c75be
 /** A LoRA trained into a Replicate model: owner/name/version. It runs on its own version (see jobs.js). */
 const OWN = /^([A-Za-z0-9_-]+)\/([A-Za-z0-9_.-]+)\/([a-f0-9]{64})$/;
 const TRIGGER = /^[A-Za-z][A-Za-z0-9_]{0,79}$/;
+/**
+ * Qwen Image LoRAs (owner decision, 2026-10-08: an alternate trainer). The trainer is also the picture model that runs
+ * a Qwen LoRA from its weights file; a LoRA trained into the user's own model runs on that model's own version.
+ * The plain Qwen Image model cannot use these LoRAs, so it is not offered for them.
+ */
+const QWEN_TRAINER = 'qwen/qwen-image-lora-trainer';
+/** Qwen learns from plain words, not made-up tokens: "a person named Pao". */
+const QWEN_PHRASE = /^[A-Za-z][A-Za-z0-9 ,'.-]{1,79}$/;
+const BASES = {
+  'flux-dev': { name: 'FLUX dev', model: MODEL, field: 'lora_weights' },
+  'qwen-image': { name: 'Qwen Image', model: QWEN_TRAINER, field: 'replicate_weights' },
+};
+const baseFor = (model) => Object.entries(BASES).find(([, b]) => b.model === model);
 const MAX_FILE_BYTES = 16384;
 
 class LoraError extends Error {}
@@ -23,7 +36,7 @@ function validate(item) {
   const baseModel = String(item.baseModel ?? item.base_model ?? 'flux-dev');
   if (!name || name.length > 80 || /\p{Cc}/u.test(name)) throw new LoraError('Give the LoRA a name of up to 80 characters.');
   if (trigger.length > 120 || /\p{Cc}/u.test(trigger)) throw new LoraError('Keep the trigger word below 120 characters on one line.');
-  if (baseModel !== 'flux-dev') throw new LoraError('This library takes FLUX dev LoRAs. Video LoRAs are not interchangeable.');
+  if (!BASES[baseModel]) throw new LoraError('This library takes FLUX dev and Qwen Image LoRAs. Video LoRAs are not interchangeable.');
   if (!Number.isFinite(scale) || scale < -1 || scale > 3) throw new LoraError('The LoRA strength must be between -1 and 3.');
   if (reference.length > 4000) throw new LoraError('The LoRA reference is too long.');
   if (reference.startsWith('https://')) {
@@ -59,11 +72,17 @@ function suggestTrigger(name) {
   return letters.length >= 4 ? letters : `${letters}LORA`;
 }
 
-/** The private Replicate model name for a LoRA: lowercase letters, digits, and dashes, starting with lora-. */
-function destinationSlug(name) {
+/** The private Replicate model name for a LoRA: lowercase letters, digits, and dashes, starting with lora- (lora-qwen- for Qwen). */
+function destinationSlug(name, baseModel = 'flux-dev') {
   const slug = String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50).replace(/-+$/, '');
   if (!slug) throw new LoraError('Use a LoRA name with at least one letter or digit.');
-  return `lora-${slug}`;
+  return baseModel === 'qwen-image' ? `lora-qwen-${slug}` : `lora-${slug}`;
+}
+
+/** Words for a Qwen LoRA from its name: "a person named Pao" for "Pao". */
+function suggestPhrase(name) {
+  const first = String(name || '').trim().split(/\s+/)[0].replace(/[^A-Za-z0-9'-]/g, '');
+  return first ? `a person named ${first[0].toUpperCase()}${first.slice(1)}` : 'a person';
 }
 
 /** The prompt with the trigger word in front, unless it is already there as a whole word. */
@@ -71,7 +90,8 @@ function withTrigger(prompt, trigger) {
   const p = String(prompt || '');
   if (!trigger || trigger.length < 2) return p;
   const re = new RegExp(`(^|[^A-Za-z0-9_])${trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Za-z0-9_])`, 'i');
-  return re.test(p) ? p : `${trigger} ${p}`.trim();
+  if (re.test(p)) return p;
+  return (/\s/.test(trigger) ? `${trigger}, ${p}` : `${trigger} ${p}`).replace(/,\s*$/, '').trim();
 }
 
 /**
@@ -117,4 +137,4 @@ function minutesLeft(firstAt, firstProgress, nowAt, progressNow) {
   return Math.max(1, Math.round(((elapsed / done) * (1 - progressNow)) / 60000));
 }
 
-module.exports = { phase, minutesLeft, FORMAT, MODEL, TRAINER, TRAINER_VERSION, OWN, TRIGGER, validate, parse, toFile, suggestTrigger, destinationSlug, withTrigger, progress, LoraError };
+module.exports = { BASES, baseFor, QWEN_TRAINER, QWEN_PHRASE, suggestPhrase, phase, minutesLeft, FORMAT, MODEL, TRAINER, TRAINER_VERSION, OWN, TRIGGER, validate, parse, toFile, suggestTrigger, destinationSlug, withTrigger, progress, LoraError };

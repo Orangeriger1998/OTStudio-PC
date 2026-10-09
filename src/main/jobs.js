@@ -98,6 +98,18 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
     return controls;
   }
 
+  /** The newest version of a Replicate model, from Replicate (kept for an hour). */
+  async function latestVersion(model, k) {
+    const c = cache()[`latest:${model}`];
+    if (c && now() - c.at < 3600000) return c.value;
+    const res = await net.request(`${replicate.BASE}/models/${model}`, { headers: bearer(k), keyHeaders: ['Authorization'] });
+    const body = await readJson(res);
+    const id = body && body.latest_version && body.latest_version.id;
+    if (!res.ok || typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id)) throw new JobError(service.errorText({ result: {} }, body) || 'Replicate did not report the model version.');
+    putCache(`latest:${model}`, id);
+    return id;
+  }
+
   /** The input list of one version of a Replicate model, such as a trained LoRA. */
   async function versionSchema(owner, name, version, k) {
     const id = `replicate:${owner}/${name}/${version}`;
@@ -179,8 +191,21 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
       entry.op = { type: 'longer', parent: parent.id, parentFile: parent.files[0] };
     }
     let request;
-    const own = d.special && req.model === lora.MODEL && typeof (req.options || {}).lora_weights === 'string' ? lora.OWN.exec(req.options.lora_weights) : null;
-    if (own) {
+    const based = d.special ? lora.baseFor(req.model) : null;
+    const base = based ? based[1] : null;
+    const weights = base ? (req.options || {})[base.field] : undefined;
+    const own = base && typeof weights === 'string' ? lora.OWN.exec(weights) : null;
+    if (base && base.model === lora.QWEN_TRAINER && !own && !(typeof weights === 'string' && /^https:\/\//.test(weights))) {
+      throw new JobError('Qwen Image with a LoRA needs a saved Qwen LoRA. Choose one under Saved LoRA, or train one on the LoRAs tab.');
+    }
+    if (base && base.model === lora.QWEN_TRAINER && !own) {
+      // A Qwen LoRA as a weights file runs on the trainer's own picture model, always by version.
+      const version = await latestVersion(lora.QWEN_TRAINER, k);
+      const [owner, name] = lora.QWEN_TRAINER.split('/');
+      const controls = await versionSchema(owner, name, version, k);
+      const input = replicate.buildInput(controls, req.prompt, req.options || {}, {});
+      request = { method: 'POST', url: `${replicate.BASE}/predictions`, body: JSON.stringify({ version, input }), headers: { ...bearer(k), 'Content-Type': 'application/json' }, keyHeaders: ['Authorization'] };
+    } else if (own) {
       // A LoRA trained into the user's own private model: the public FLUX dev LoRA model cannot download it, so the
       // trained model's own version runs instead. That version already carries the LoRA.
       const [, owner, name, version] = own;
@@ -188,7 +213,7 @@ function createJobs({ store, keys, net, mediaDir, services, approveHost, approve
       const names = new Set(controls.map((c) => c.name));
       const options = {};
       for (const [n, v] of Object.entries(req.options || {})) {
-        if (n === 'lora_weights') continue;
+        if (n === base.field) continue;
         if (names.has(n)) options[n] = v;
         else if (n === 'guidance' && names.has('guidance_scale')) options.guidance_scale = v;
       }

@@ -1,5 +1,12 @@
 # Revision Log
 
+## 0.6.0 (2026-10-08)
+
+- An alternate LoRA trainer: Qwen Image, on Replicate's qwen/qwen-image-lora-trainer, chosen under Trainer on the LoRAs tab.
+- Qwen LoRAs learn from plain words such as "a person named Pao" in place of a made-up trigger word.
+- A new picture model, Qwen Image with a LoRA, the only Qwen model that can run these LoRAs. It runs your trained model's own version.
+- Every LoRA shows the model it was made for, and Saved LoRA lists only the LoRAs that fit the chosen model.
+
 ## 0.5.2 (2026-10-08)
 
 - LoRA training shows its stage: starting, writing captions for the photos, loading the FLUX model, training, and saving.

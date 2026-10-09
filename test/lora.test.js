@@ -128,3 +128,78 @@ test('the trainer stage and the time left are read from its log', () => {
   assert.equal(lora.minutesLeft(1000, 0.1, 1000 + 5 * 60000, 0.4), 10, '30% in 5 minutes leaves about 10 minutes for the last 60%');
   assert.equal(lora.minutesLeft(1000, 0.1, 1000 + 30000, 0.12), null, 'too early to tell');
 });
+
+const QV = 'b'.repeat(64);
+
+test('Qwen LoRAs: library rules, model names, plain-word descriptions, and the weights setting is text', () => {
+  const item = lora.validate({ name: 'Pao', reference: `tiger/lora-qwen-pao/${VERSION}`, trigger: 'a person named Pao', scale: 1, baseModel: 'qwen-image' });
+  assert.equal(item.baseModel, 'qwen-image');
+  assert.deepEqual(lora.parse(lora.toFile(item)), item);
+  assert.equal(lora.destinationSlug('Pao', 'qwen-image'), 'lora-qwen-pao');
+  assert.equal(lora.suggestPhrase('pao beach'), 'a person named Pao');
+  assert.equal(lora.withTrigger('dancing on a beach', 'a person named Pao'), 'a person named Pao, dancing on a beach');
+  assert.equal(lora.baseFor('qwen/qwen-image-lora-trainer')[0], 'qwen-image');
+  const replicate = require('../src/core/replicate');
+  const doc = { components: { schemas: { Input: { properties: { prompt: { type: 'string' }, replicate_weights: { type: 'string', format: 'uri' }, lora_scale: { type: 'number', minimum: 0, maximum: 3 } } } } } };
+  const c = replicate.parseSchema(doc, 'image', 'qwen/qwen-image-lora-trainer').find((x) => x.name === 'replicate_weights');
+  assert.equal(c.type, 'text', 'a LoRA file address is not a picture to choose');
+  assert.equal(c.picture, undefined);
+});
+
+test('Qwen training: newest trainer version, a private lora-qwen- model, plain captions, and the result joins the library', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otqwen-'));
+  const media = path.join(dir, 'media');
+  fs.mkdirSync(media);
+  let sentTo; let body; let reply;
+  const fetchImpl = async (url, opts) => {
+    if (url === 'https://api.replicate.com/v1/account') return json(200, { username: 'tiger' });
+    if (url === 'https://api.replicate.com/v1/models/qwen/qwen-image-lora-trainer') return json(200, { latest_version: { id: QV } });
+    if (url === 'https://api.replicate.com/v1/models/tiger/lora-qwen-pao') return json(404, {});
+    if (url === 'https://api.replicate.com/v1/models' && opts.method === 'POST') { const b = JSON.parse(opts.body); return json(201, { owner: b.owner, name: b.name, visibility: 'private' }); }
+    if (url.endsWith('/trainings') && opts.method === 'POST') { sentTo = url; body = JSON.parse(opts.body); return json(201, { id: 'q1', status: 'starting' }); }
+    if (url === 'https://api.replicate.com/v1/trainings/q1') return json(200, reply);
+    throw new Error(`unexpected ${opts.method} ${url}`);
+  };
+  let clock = 1000;
+  const loras = createLoras({
+    store: createStore(path.join(dir, 'data')), keys: { get: () => 'r8_test1234' }, net: createNet(() => BUILTIN_HOSTS, fetchImpl), mediaDir: media,
+    upload: async () => 'https://api.replicate.com/v1/files/zipq', notify: () => {}, now: () => clock,
+  });
+  const src = path.join(dir, 'p.png');
+  fs.writeFileSync(src, await sharp({ create: { width: 1024, height: 1024, channels: 3, background: '#806040' } }).png().toBuffer());
+  const photo = await loras.addPhoto(src);
+  await assert.rejects(loras.train({ base: 'qwen-image', name: 'Pao', trigger: 'PAO_123!', photos: [photo.name] }), /plain words/);
+  const record = await loras.train({ base: 'qwen-image', name: 'Pao', trigger: 'a person named Pao', photos: [photo.name] });
+  assert.equal(record.state, 'starting');
+  assert.equal(sentTo, `https://api.replicate.com/v1/models/qwen/qwen-image-lora-trainer/versions/${QV}/trainings`);
+  assert.equal(body.destination, 'tiger/lora-qwen-pao');
+  assert.deepEqual(body.input, { dataset: 'https://api.replicate.com/v1/files/zipq', steps: 1000, lora_rank: 64, default_caption: 'A photo of a person named Pao', batch_size: 1 });
+  reply = { id: 'q1', status: 'succeeded', output: { weights: 'https://replicate.delivery/xyz/trained.zip' } };
+  clock += 31000; loras.tick(); await new Promise((r) => setTimeout(r, 30));
+  const item = loras.state().library[0];
+  assert.deepEqual([item.baseModel, item.reference, item.trigger], ['qwen-image', 'https://replicate.delivery/xyz/trained.zip', 'a person named Pao'], 'a weights file is kept when no model version comes back');
+});
+
+test('Qwen pictures: the trained model runs on its own version; a weights file runs on the trainer, by version; none is refused', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otqwenrun-'));
+  const created = [];
+  const schema = { components: { schemas: { Input: { properties: { prompt: { type: 'string' }, aspect_ratio: { type: 'string', enum: ['1:1', '4:3'] }, replicate_weights: { type: 'string', format: 'uri' }, lora_scale: { type: 'number', minimum: 0, maximum: 3 } }, required: ['prompt'] } } } };
+  const fetchImpl = async (url, opts) => {
+    if (url === `https://api.replicate.com/v1/models/tiger/lora-qwen-pao/versions/${VERSION}`) return json(200, { id: VERSION, openapi_schema: schema });
+    if (url === 'https://api.replicate.com/v1/models/qwen/qwen-image-lora-trainer') return json(200, { latest_version: { id: QV } });
+    if (url === `https://api.replicate.com/v1/models/qwen/qwen-image-lora-trainer/versions/${QV}`) return json(200, { id: QV, openapi_schema: schema });
+    if (url === 'https://api.replicate.com/v1/predictions' && opts.method === 'POST') { created.push(JSON.parse(opts.body)); return json(201, { id: `p${created.length}`, status: 'starting' }); }
+    throw new Error(`unexpected ${opts.method} ${url}`);
+  };
+  const jobs = createJobs({
+    store: createStore(path.join(dir, 'data')), keys: { get: () => 'r8_test1234', has: () => true }, net: createNet(() => BUILTIN_HOSTS, fetchImpl),
+    mediaDir: path.join(dir, 'media'), services: () => [], approveHost: async () => false, approvedHosts: () => BUILTIN_HOSTS, notify: () => {},
+  });
+  const model = 'qwen/qwen-image-lora-trainer';
+  await jobs.generate({ kind: 'image', service: 'replicate', model, prompt: 'a person named Pao on a beach', options: { replicate_weights: `tiger/lora-qwen-pao/${VERSION}`, lora_scale: 0.9, aspect_ratio: '4:3' } });
+  await jobs.generate({ kind: 'image', service: 'replicate', model, prompt: 'a person named Pao on a beach', options: { replicate_weights: 'https://replicate.delivery/xyz/trained.zip', lora_scale: 0.9 } });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual(created[0], { version: VERSION, input: { prompt: 'a person named Pao on a beach', aspect_ratio: '4:3', lora_scale: 0.9 } });
+  assert.deepEqual(created[1], { version: QV, input: { prompt: 'a person named Pao on a beach', replicate_weights: 'https://replicate.delivery/xyz/trained.zip', lora_scale: 0.9 } });
+  await assert.rejects(jobs.generate({ kind: 'image', service: 'replicate', model, prompt: 'x', options: {} }), /needs a saved Qwen LoRA/);
+});

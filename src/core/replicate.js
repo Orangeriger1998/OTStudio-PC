@@ -11,7 +11,7 @@ const LABELS = {
   disable_safety_checker: 'Safety checker', aspect_ratio: 'Shape', num_outputs: 'Number of pictures', go_fast: 'Fast mode',
   seed: 'Seed', megapixels: 'Size in megapixels', output_format: 'File type', output_quality: 'File quality',
   num_inference_steps: 'Steps', guidance: 'Prompt strength', guidance_scale: 'Prompt strength', prompt_strength: 'How far from your picture',
-  lora_scale: 'LoRA strength', lora_weights: 'LoRA', duration: 'Length in seconds', resolution: 'Resolution', negative_prompt: 'Avoid',
+  lora_scale: 'LoRA strength', lora_weights: 'LoRA', replicate_weights: 'LoRA', duration: 'Length in seconds', resolution: 'Resolution', negative_prompt: 'Avoid',
   image: 'Picture', input_image: 'Picture', image_input: 'Pictures', input_images: 'Pictures', images: 'Pictures',
   first_frame: 'Starting picture', last_frame: 'Ending picture', last_image: 'Ending picture', end_image: 'Ending picture',
   start_image: 'Starting picture', first_frame_image: 'Starting picture', frames_per_second: 'Frames per second', fps: 'Frames per second',
@@ -27,7 +27,7 @@ const EDIT_MODELS = new Set(['black-forest-labs/flux-kontext-dev', 'qwen/qwen-im
 const MODELS = {
   image: [
     ['black-forest-labs/flux-schnell', 'FLUX schnell'], ['black-forest-labs/flux-dev', 'FLUX dev'], ['black-forest-labs/flux-1.1-pro', 'FLUX 1.1 pro'],
-    ['black-forest-labs/flux-dev-lora', 'FLUX dev with a LoRA'], ['black-forest-labs/flux-kontext-dev', 'FLUX Kontext dev (edit)'],
+    ['black-forest-labs/flux-dev-lora', 'FLUX dev with a LoRA'], ['qwen/qwen-image-lora-trainer', 'Qwen Image with a LoRA'], ['black-forest-labs/flux-kontext-dev', 'FLUX Kontext dev (edit)'],
     ['qwen/qwen-image-edit-plus', 'Qwen Image Edit Plus (edit)'], ['bytedance/seedream-4.5', 'Seedream 4.5'], ['black-forest-labs/flux-2-dev', 'FLUX.2 dev'],
     ['black-forest-labs/flux-2-klein-9b', 'FLUX.2 klein 9B'], ['prunaai/p-image-edit', 'P-Image Edit (edit)'],
   ],
@@ -64,7 +64,9 @@ function parseSchema(doc, kind, model) {
     const p = resolve(doc, raw);
     const c = { name, label: label(name, kind), required: required.has(name), note: String(p.description || '').slice(0, 300), order: Number(p['x-order'] ?? 999) };
     const items = p.type === 'array' ? resolve(doc, p.items) : null;
-    if (p.format === 'uri' || (items && items.format === 'uri')) { c.type = 'picture'; c.picture = true; c.list = !!items; c.max = items ? (p.maxItems || 14) : 1; }
+    // A weights address (a LoRA file) is text, not a picture to choose.
+    if ((p.format === 'uri' || (items && items.format === 'uri')) && /weights|lora/i.test(name)) { c.type = 'text'; c.uri = true; }
+    else if (p.format === 'uri' || (items && items.format === 'uri')) { c.type = 'picture'; c.picture = true; c.list = !!items; c.max = items ? (p.maxItems || 14) : 1; }
     else if (Array.isArray(p.enum)) { c.type = 'choice'; c.choices = p.enum; }
     else if (p.type === 'boolean') c.type = 'switch';
     else if (p.type === 'integer' || p.type === 'number') { c.type = 'number'; c.integer = p.type === 'integer'; c.min = p.minimum; c.max = p.maximum; }
