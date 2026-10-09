@@ -147,8 +147,11 @@ function registerHandlers() {
   handle('save', (id) => {
     const entry = jobs.list().find((e) => e.id === id);
     if (!entry || !entry.files.length) throw new Error('There is nothing to save.');
+    // Copies saved earlier (by hand or automatically) that are still there count; nothing is copied twice.
+    const copies = (entry.saved || []).filter((p) => fs.existsSync(p));
+    if (copies.length >= entry.files.length) return { dir: path.dirname(copies[0]), files: copies, already: true };
     const r = saveEntry(entry);
-    jobs.mark(entry.id, { saved: [...(entry.saved || []), ...r.files] });
+    jobs.mark(entry.id, { saved: [...copies, ...r.files] });
     return r;
   });
   handle('media:menu', (id, name) => {

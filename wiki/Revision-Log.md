@@ -1,5 +1,12 @@
 # Revision Log
 
+## 0.6.1 (2026-10-08)
+
+- A job with several pictures shows all of them: a row of small pictures under the large one, and arrow buttons in the full-size view.
+- Save no longer copies a job a second time when it is already in your folder (for example, after automatic saving). The button reads Saved and shows where the copies are.
+- Right-click a picture on a card for Save as, Show in folder, and Copy picture.
+- Edit, Expand, Upscale, Make a video, and Use as reference work on the picture shown large, not always the first one.
+
 ## 0.6.0 (2026-10-08)
 
 - An alternate LoRA trainer: Qwen Image, on Replicate's qwen/qwen-image-lora-trainer, chosen under Trainer on the LoRAs tab.

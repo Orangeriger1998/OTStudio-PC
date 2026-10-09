@@ -285,13 +285,23 @@ function renderGallery() {
   g.scrollTop = top;
 }
 
+/** Which picture each card shows large, when a job made several. */
+const shown = new Map();
+
 function card(e) {
   const mediaBox = h('div', { class: 'media' });
+  let thumbs = null;
   if (e.state === 'done' && e.files.length) {
-    const first = e.files[0];
-    if (e.kind === 'video') mediaBox.append(h('video', { src: mediaUrl(first), controls: true, preload: 'metadata' }));
-    else mediaBox.append(h('img', { src: mediaUrl(first), alt: e.prompt.slice(0, 100), onclick: () => openViewer(e.files, 0) }));
-    if (e.files.length > 1) mediaBox.append(h('span', { class: 'count', text: `${e.files.length} ${e.kind === 'video' ? 'videos' : 'pictures'}` }));
+    const at = Math.min(shown.get(e.id) || 0, e.files.length - 1);
+    const name = e.files[at];
+    const menu = (ev) => { ev.preventDefault(); ot.mediaMenu(e.id, name).catch((x) => snack(x.message)); };
+    if (e.kind === 'video') mediaBox.append(h('video', { src: mediaUrl(name), controls: true, preload: 'metadata', oncontextmenu: menu }));
+    else mediaBox.append(h('img', { src: mediaUrl(name), alt: e.prompt.slice(0, 100), title: 'Click to see it full size. Right-click for Save as.', onclick: () => openViewer(e.files, at), oncontextmenu: menu }));
+    if (e.files.length > 1) {
+      mediaBox.append(h('span', { class: 'count', text: `${at + 1} of ${e.files.length}` }));
+      thumbs = h('div', { class: 'thumbs' }, e.files.map((n, i) => h('button', { class: `thumb ${i === at ? 'on' : ''}`, title: `${e.kind === 'video' ? 'Video' : 'Picture'} ${i + 1}`, onclick: () => { shown.set(e.id, i); renderGallery(); } },
+        e.kind === 'video' ? h('span', { text: String(i + 1) }) : h('img', { src: mediaUrl(n), alt: '' }))));
+    }
   } else if (BUSY.includes(e.state)) mediaBox.append(h('div', { class: 'spinner' }));
   else mediaBox.append(h('div', { class: 'note', text: STATE_WORDS[e.state] || e.state }));
 
@@ -311,19 +321,20 @@ function card(e) {
   const actions = h('div', { class: 'actions' });
   const add = (text, fn, cls = '') => actions.append(h('button', { class: `btn small ${cls}`, text, onclick: fn }));
   if (e.state === 'done') {
-    add('Save', () => save(e));
+    add(e.saved && e.saved.length ? 'Saved' : 'Save', () => save(e));
     if (e.kind === 'image') {
-      add('Edit', () => editPicture(e.files[0]));
-      add('Expand', () => openExpand({ source: e.files[0] }));
-      add('Upscale', () => openUpscale({ source: e.files[0] }));
-      add('Make a video', () => usePicture(e, 'video'));
-      add('Use as reference', () => usePicture(e, 'image'));
+      const pic = () => e.files[Math.min(shown.get(e.id) || 0, e.files.length - 1)];
+      add('Edit', () => editPicture(pic()));
+      add('Expand', () => openExpand({ source: pic() }));
+      add('Upscale', () => openUpscale({ source: pic() }));
+      add('Make a video', () => usePicture(e, 'video', pic()));
+      add('Use as reference', () => usePicture(e, 'image', pic()));
     } else add('Make it longer', () => makeLonger(e));
   }
   if (e.state === 'running' && e.service === 'replicate') add('Stop', () => ot.cancel(e.id).catch((x) => snack(x.message)));
   if (e.canRetryDownload && e.state === 'failed') add('Download again', () => ot.downloadRetry(e.id).catch((x) => snack(x.message)));
   if (!running) { add('Repeat', () => repeat(e)); add('Delete', () => removeEntries([e.id]), 'danger'); }
-  return h('article', { class: 'card' }, mediaBox, body, actions);
+  return h('article', { class: 'card' }, mediaBox, thumbs, body, actions);
 }
 
 function modelName(e) {
@@ -343,7 +354,7 @@ function tickTimes() {
 async function save(e) {
   try {
     const r = await ot.save(e.id);
-    snack(`Saved to ${r.dir}`, [['Open folder', () => ot.folderOpen(e.kind)], ['Change folder', async () => { const dir = await ot.folderChange(e.kind); snack(`New ${KIND_WORD[e.kind]}s will be saved to ${dir}`); }]]);
+    snack(r.already ? `Already saved in ${r.dir}` : `Saved to ${r.dir}`, [['Open folder', () => ot.folderOpen(e.kind)], ['Change folder', async () => { const dir = await ot.folderChange(e.kind); snack(`New ${KIND_WORD[e.kind]}s will be saved to ${dir}`); }]]);
   } catch (x) { snack(x.message); }
 }
 
@@ -367,7 +378,7 @@ function clearHistory(kind) {
 }
 
 /** Puts a finished picture into a picture input: a reference on the Pictures tab, or the starting picture of a video. */
-function usePicture(e, kind) {
+function usePicture(e, kind, name = e.files[0]) {
   const f = ui.forms[kind];
   const inputs = f.form ? f.form.pictures : [];
   const preferred = kind === 'video' ? ['first_frame', 'image', 'start_image', 'first_frame_image'] : [];
@@ -379,7 +390,7 @@ function usePicture(e, kind) {
     return;
   }
   const list = f.pictures[target.name] || [];
-  if (!list.includes(e.files[0])) list.push(e.files[0]);
+  if (!list.includes(name)) list.push(name);
   f.pictures[target.name] = list.slice(-(target.max || 1));
   render();
 }
@@ -1020,7 +1031,13 @@ let viewer = null;
 function openViewer(files, index) { viewer = { files, index }; showViewer(); }
 function showViewer() {
   const v = document.getElementById('viewer');
-  v.replaceChildren(h('img', { src: mediaUrl(viewer.files[viewer.index]), alt: '' }));
+  const step = (d) => (ev) => { ev.stopPropagation(); viewer.index = (viewer.index + d + viewer.files.length) % viewer.files.length; showViewer(); };
+  const many = viewer.files.length > 1;
+  v.replaceChildren(
+    h('img', { src: mediaUrl(viewer.files[viewer.index]), alt: '' }),
+    many ? h('button', { class: 'nav prev', text: '\u2039', title: 'Previous picture (left arrow)', onclick: step(-1) }) : null,
+    many ? h('button', { class: 'nav next', text: '\u203A', title: 'Next picture (right arrow)', onclick: step(1) }) : null,
+    h('div', { class: 'viewer-count', text: `${many ? `${viewer.index + 1} of ${viewer.files.length} · ` : ''}Click or press Escape to close` }));
   v.hidden = false;
 }
 function closeViewer() { viewer = null; document.getElementById('viewer').hidden = true; }
