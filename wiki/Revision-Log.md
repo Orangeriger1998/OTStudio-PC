@@ -1,5 +1,10 @@
 # Revision Log
 
+## 0.5.2 (2026-10-08)
+
+- LoRA training shows its stage: starting, writing captions for the photos, loading the FLUX model, training, and saving.
+- Before the steps begin, the bar moves back and forth so a training never looks stuck. During the steps it shows about how many minutes are left, and each training shows when it was last checked.
+
 ## 0.5.1 (2026-10-08)
 
 - A shape typed in a chat message, such as 4:3, now reaches the model's shape setting. Before, it stayed in the prompt and the picture came out square.

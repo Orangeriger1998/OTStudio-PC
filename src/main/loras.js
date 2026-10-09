@@ -153,6 +153,10 @@ function createLoras({ store, keys, net, mediaDir, upload, notify, now = () => D
       if (!res.ok || json.id !== record.trainingId) { record.nextPoll = now() + POLL_MS; return; }
       const st = json.status;
       record.progress = lora.progress(json.logs, record.steps) ?? record.progress;
+      record.phase = lora.phase(json.logs, record.progress) || record.phase || null;
+      record.checked = now();
+      if (record.progress !== null && record.progress !== undefined && !record.firstStepAt) Object.assign(record, { firstStepAt: now(), firstProgress: record.progress });
+      record.minutesLeft = lora.minutesLeft(record.firstStepAt, record.firstProgress, now(), record.progress);
       if (st === 'succeeded') {
         const version = json.output && typeof json.output.version === 'string' ? json.output.version.replace(':', '/') : '';
         if (!new RegExp(`^${record.destination.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/[a-f0-9]{64}$`).test(version)) {

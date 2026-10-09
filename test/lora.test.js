@@ -119,3 +119,12 @@ test('pictures with a trained LoRA run on its own version, with guidance renamed
   await new Promise((r) => setTimeout(r, 30));
   assert.deepEqual(created, { version: VERSION, input: { prompt: 'ANNAFACE on a beach', guidance_scale: 3, num_outputs: 2 } });
 });
+
+test('the trainer stage and the time left are read from its log', () => {
+  assert.equal(lora.phase('Downloading weights... done\nRunning autocaption with LLaVA on 20 images', null), 'captioning');
+  assert.equal(lora.phase('captioning...\nloading checkpoint\nflux_train_replicate:  12%|# | 120/1000 [01:23<10:00, 1.4it/s]', 0.12), 'training');
+  assert.equal(lora.phase('flux_train_replicate: 100%|#| 1000/1000 [14:00<00:00]\nSaving model to output/lora.safetensors', 1), 'saving');
+  assert.equal(lora.phase('', null), null);
+  assert.equal(lora.minutesLeft(1000, 0.1, 1000 + 5 * 60000, 0.4), 10, '30% in 5 minutes leaves about 10 minutes for the last 60%');
+  assert.equal(lora.minutesLeft(1000, 0.1, 1000 + 30000, 0.12), null, 'too early to tell');
+});

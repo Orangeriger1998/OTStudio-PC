@@ -89,4 +89,32 @@ function progress(logs, steps) {
   return found;
 }
 
-module.exports = { FORMAT, MODEL, TRAINER, TRAINER_VERSION, OWN, TRIGGER, validate, parse, toFile, suggestTrigger, destinationSlug, withTrigger, progress, LoraError };
+/**
+ * The trainer's current stage from the tail of its log: 'captioning', 'loading', 'training', or 'saving'; null when
+ * the log says nothing yet. Only known words are looked for; the log text itself is never shown.
+ */
+function phase(logs, progressNow) {
+  if (typeof logs !== 'string' || !logs) return null;
+  const tail = logs.slice(-4000).toLowerCase();
+  const last = (re) => { let i = -1; for (const m of tail.matchAll(re)) i = m.index; return i; };
+  const at = {
+    saving: last(/saving|uploading|upload|pushing|writing weights|safetensors/g),
+    training: last(/\d+\s*\/\s*\d+\s*\[|it\/s|s\/it/g),
+    loading: last(/download|loading|load checkpoint|pget|quantiz/g),
+    captioning: last(/caption|llava|florence|blip/g),
+  };
+  if (progressNow !== null && progressNow !== undefined && progressNow >= 0.99 && at.saving >= 0) return 'saving';
+  const best = Object.entries(at).filter(([, i]) => i >= 0).sort((a, b) => b[1] - a[1])[0];
+  return best ? best[0] : null;
+}
+
+/** Minutes left, from how fast the steps went since the first one was seen; null until there is enough to tell. */
+function minutesLeft(firstAt, firstProgress, nowAt, progressNow) {
+  if (!firstAt || progressNow === null || progressNow === undefined) return null;
+  const done = progressNow - firstProgress;
+  const elapsed = nowAt - firstAt;
+  if (done < 0.02 || elapsed < 60000) return null;
+  return Math.max(1, Math.round(((elapsed / done) * (1 - progressNow)) / 60000));
+}
+
+module.exports = { phase, minutesLeft, FORMAT, MODEL, TRAINER, TRAINER_VERSION, OWN, TRIGGER, validate, parse, toFile, suggestTrigger, destinationSlug, withTrigger, progress, LoraError };

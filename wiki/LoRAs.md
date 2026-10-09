@@ -22,4 +22,12 @@ A LoRA you trained lives in a private model in your Replicate account. The publi
 
 OT Studio turns each photo upright, makes a JPEG copy of at most 2048 pixels, packs the copies into a ZIP, and sends it to Replicate. Your original photos stay untouched. Replicate keeps the LoRA in a private model named lora- and the LoRA's name, in your account.
 
-The **Trainings** list shows each training with its progress, read from Replicate every 30 seconds. **Stop** ends a running training; Replicate still bills the time it ran. When a training finishes, OT Studio adds the LoRA to your list, and **Use for pictures** appears next to it.
+The **Trainings** list shows each training, checked with Replicate every 30 seconds, with the time of the last check. A training goes through stages, and the list names each one:
+
+1. Replicate starts the trainer.
+2. Replicate writes a caption for each photo, so the trainer knows what each one shows.
+3. Replicate loads the FLUX model.
+4. Training runs its steps (1,000 at first). The bar fills with the steps, and after a minute or two it shows about how many minutes are left.
+5. Replicate saves the LoRA.
+
+During the first three stages, which usually take 5 to 10 minutes, the bar moves back and forth to show the training is alive; it starts to fill when the steps begin. **Stop** ends a running training; Replicate still bills the time it ran. When a training finishes, OT Studio adds the LoRA to your list, and **Use for pictures** appears next to it.

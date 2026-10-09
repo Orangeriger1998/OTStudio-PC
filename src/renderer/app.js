@@ -693,14 +693,24 @@ function trainingsSection() {
     const running = ['sending', 'starting', 'processing'].includes(t.state);
     const pct = t.progress === null || t.progress === undefined ? null : Math.round(t.progress * 100);
     const item = S.loras.library.find((l) => l.id === t.loraId);
-    const bar = h('div', { class: 'bar' }, h('div', { class: 'fill' }));
-    if (pct !== null) bar.firstChild.style.setProperty('width', `${pct}%`);
+    const bar = h('div', { class: `bar${pct === null ? ' waiting' : ''}` }, h('div', { class: 'fill' }));
+    if (pct !== null) bar.firstChild.style.setProperty('width', `${Math.max(1, pct)}%`);
+    const stage = {
+      captioning: 'Replicate is writing a caption for each photo.',
+      loading: 'Replicate is loading the FLUX model.',
+      training: 'Training has started.',
+      saving: 'Replicate is saving the LoRA.',
+    }[t.phase] || (t.state === 'starting' ? 'Replicate is starting the trainer.' : 'Replicate is preparing the trainer.');
+    const checked = t.checked ? ` Last checked ${new Date(t.checked).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.` : '';
+    const progressText = pct === null
+      ? `${stage} The bar fills once the steps begin, usually within 5 to 10 minutes.${checked}`
+      : `${pct}% of the steps done${t.minutesLeft ? `, about ${t.minutesLeft} minute${t.minutesLeft === 1 ? '' : 's'} left` : ''}.${t.phase === 'saving' ? ' Replicate is saving the LoRA.' : ''}${checked}`;
     return h('div', { class: 'item' },
       h('div', { class: 'grow' },
         h('strong', { text: t.name }), ' ', h('span', { class: `state ${t.state === 'succeeded' ? 'done' : running ? 'running' : 'failed'}`, text: TRAIN_WORDS[t.state] || t.state }),
         running ? h('span', { class: 'note', 'data-since': String(t.created), text: '' }) : null,
         h('br'), h('span', { class: 'note', text: `${t.photos.length} photos · ${t.steps} steps · trigger ${t.trigger} · ${new Date(t.created).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` }),
-        running ? h('div', {}, bar, h('span', { class: 'note', text: pct === null ? 'Replicate is preparing the trainer. The first step can take a few minutes.' : `${pct}% of the steps done.` })) : null,
+        running ? h('div', {}, bar, h('span', { class: 'note', text: progressText })) : null,
         t.error ? h('div', { class: 'message', text: t.error }) : null),
       running && t.trainingId ? h('button', { class: 'btn small', text: 'Stop', onclick: async () => { if (window.confirm('Stop this training? Replicate still bills the time it has run.')) { try { await ot.loraCancel(t.id); } catch (x) { snack(x.message); } } } }) : null,
       item ? h('button', { class: 'btn small primary', text: 'Use for pictures', onclick: () => useLora(item) }) : null,

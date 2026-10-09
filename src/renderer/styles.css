@@ -143,3 +143,5 @@ select.chat-model { width: 100%; }
 .composer .field > .btn { align-self: flex-start; }
 .settings-line { color: var(--accent); font-size: 13px; }
 .note.warn { color: #f0c27a; }
+.bar.waiting .fill { width: 30%; animation: waiting 1.6s ease-in-out infinite; }
+@keyframes waiting { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
