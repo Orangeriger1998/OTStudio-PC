@@ -700,7 +700,7 @@ const TRAINER_TEXT = {
   'qwen-image': {
     choice: 'Qwen Image (alternate): about $1.40 to $2.75', word: 'How the photos describe the subject', wordNote: 'Plain words, not a made-up word: Qwen learns from familiar words. Every photo gets the caption "A photo of" these words, and you use them in your prompts.',
     steps: '100 to 6000. 1000 to 2000 suit most faces.', rank: '8 to 128. 64 suits most faces.',
-    cost: 'Training runs on Replicate with qwen/qwen-image-lora-trainer on an H100, billed by the second (about $0.09 a minute). A run usually takes 15 to 30 minutes, so about $1.40 to $2.75. The LoRA is kept in a private model in your Replicate account and runs only on Qwen Image with a LoRA. The Android app cannot use Qwen LoRAs yet.',
+    cost: 'Training runs on Replicate with qwen/qwen-image-lora-trainer on an H100, billed by the second (about $0.09 a minute). A run usually takes 15 to 30 minutes, so about $1.40 to $2.75. The LoRA is kept in a private model in your Replicate account and runs only on Qwen Image with a LoRA, here and in the Android app from version 1.9.0.',
     confirm: 'about $1.40 to $2.75, billed by the second',
   },
 };

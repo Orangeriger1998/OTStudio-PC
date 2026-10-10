@@ -21,7 +21,7 @@ The Qwen trainer differs from the FLUX trainer in a few ways:
 
 A Qwen LoRA runs only on **Qwen Image with a LoRA**, on the Pictures tab, which always needs a Qwen LoRA chosen under **Saved LoRA**. The plain Qwen Image model and the Qwen editing models cannot use these LoRAs. OT Studio runs your trained model's own version; if Replicate returns only the weights file, OT Studio runs it on the trainer's own picture model. A Qwen picture costs about 2.5 to 3 cents.
 
-The Android app cannot use Qwen LoRAs yet. Exported Qwen LoRA files say they are for Qwen Image.
+The Android app runs Qwen LoRAs from version 1.9.0 on, on its Qwen Image with a LoRA model. Exported Qwen LoRA files say they are for Qwen Image.
 
 ## Add a LoRA
 
