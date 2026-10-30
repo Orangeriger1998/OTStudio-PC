@@ -1,6 +1,6 @@
 # OT Studio for Windows and Linux: working instructions
 
-OT Studio for Windows and Linux makes pictures and videos from the user's own API keys. It is the desktop companion of the Android app (Orangeriger1998/OTStudio) and keeps its own version numbers. It has no chat. The owner is OrangeTiger (GitHub account Orangeriger1998). Keep "Created by OrangeTiger" and the repository link in Settings > About. Do not add personal email addresses to the app, the repository, or the wiki.
+OT Studio for Windows and Linux makes pictures and videos from the user's own API keys. It is the desktop companion of the Android app (Orangeriger1998/OTStudio) and keeps its own version numbers. The owner is OrangeTiger (GitHub account Orangeriger1998). Keep "Created by OrangeTiger" and the repository link in Settings > About. Do not add personal email addresses to the app, the repository, or the wiki.
 
 ## Shape of the app
 

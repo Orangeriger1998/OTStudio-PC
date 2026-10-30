@@ -1,6 +1,6 @@
 # OT Studio for Windows and Linux
 
-OT Studio makes pictures and videos with your own API keys. This is the desktop version of the OT Studio Android app, for Windows and Linux. Created by OrangeTiger.
+OT Studio makes pictures and videos with your own API keys. This is the desktop version of the [OT Studio Android app](https://github.com/Orangeriger1998/OTStudio), for Windows and Linux. Created by OrangeTiger. Downloads for every platform are on the [OT Studio website](https://orangeriger1998.github.io/OTStudio/).
 
 ## What it does
 
@@ -17,7 +17,7 @@ OT Studio makes pictures and videos with your own API keys. This is the desktop 
 
 ## Privacy
 
-OT Studio reaches only the services you use and the addresses you allow. Nothing else leaves your PC. Your keys are encrypted for your account, by Windows or by your desktop's keyring on Linux, and each key goes only to its own service. The window itself cannot reach the network. See [the wiki](wiki/Home.md) for details.
+OT Studio reaches only the services you use and the addresses you allow. Nothing else leaves your PC. Your keys are encrypted for your account, by Windows or by your desktop's keyring on Linux, and each key goes only to its own service. The window itself cannot reach the network. See [the wiki](https://github.com/Orangeriger1998/OTStudio-PC/wiki) for details.
 
 ## Install on Linux
 
