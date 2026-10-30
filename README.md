@@ -1,6 +1,6 @@
-# OT Studio for Windows
+# OT Studio for Windows and Linux
 
-OT Studio makes pictures and videos with your own API keys. This is the Windows version of the OT Studio Android app, without the chat. Created by OrangeTiger.
+OT Studio makes pictures and videos with your own API keys. This is the desktop version of the OT Studio Android app, for Windows and Linux. Created by OrangeTiger.
 
 ## What it does
 
@@ -17,7 +17,11 @@ OT Studio makes pictures and videos with your own API keys. This is the Windows 
 
 ## Privacy
 
-OT Studio reaches only the services you use and the addresses you allow. Nothing else leaves your PC. Windows encrypts your keys for your account, and each key goes only to its own service. The window itself cannot reach the network. See [the wiki](wiki/Home.md) for details.
+OT Studio reaches only the services you use and the addresses you allow. Nothing else leaves your PC. Your keys are encrypted for your account, by Windows or by your desktop's keyring on Linux, and each key goes only to its own service. The window itself cannot reach the network. See [the wiki](wiki/Home.md) for details.
+
+## Install on Linux
+
+Download the `.AppImage` or the `.deb` from the Releases page. The AppImage runs as it is: mark it executable and open it. The `.deb` installs with your package manager, for example `sudo apt install ./OTStudio-PC-0.6.3-amd64.deb`, and adds OT Studio to the menu. Keys are kept in your desktop's keyring (GNOME Keyring or KWallet). Some lines about GLib may appear if you start OT Studio from a terminal; they are harmless.
 
 ## Build from source
 
@@ -29,7 +33,7 @@ npm test
 npm start
 ```
 
-`npm run dist` builds the Windows installer in the dist folder.
+`npm run dist` builds the Windows installer, and `npm run dist:linux` builds the Linux AppImage and `.deb`, in the dist folder.
 
 ## License
 

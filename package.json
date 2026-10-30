@@ -2,7 +2,7 @@
   "name": "otstudio-pc",
   "productName": "OT Studio",
   "version": "0.6.3",
-  "description": "Pictures and videos from your own API keys, on Windows.",
+  "description": "Pictures and videos from your own API keys.",
   "author": "OrangeTiger",
   "license": "GPL-3.0-only",
   "private": true,
@@ -10,7 +10,8 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.js",
-    "dist": "electron-builder --win nsis"
+    "dist": "electron-builder --win nsis",
+    "dist:linux": "electron-builder --linux"
   },
   "build": {
     "appId": "com.orangetiger.otstudio.pc",
@@ -32,6 +33,25 @@
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "OT Studio",
       "artifactName": "OTStudio-PC-Setup-${version}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icon.png",
+      "category": "Graphics",
+      "synopsis": "Pictures and videos from your own API keys",
+      "maintainer": "OrangeTiger <216649685+Orangeriger1998@users.noreply.github.com>",
+      "executableName": "otstudio",
+      "artifactName": "OTStudio-PC-${version}-${arch}.${ext}",
+      "desktop": {
+        "entry": {
+          "Name": "OT Studio",
+          "Comment": "Pictures and videos from your own API keys",
+          "Keywords": "AI;image;video;Replicate;OpenRouter;LoRA;"
+        }
+      }
     },
     "asarUnpack": [
       "node_modules/sharp/**/*",
